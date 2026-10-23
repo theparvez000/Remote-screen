@@ -56,10 +56,12 @@
     <div id="workspace" class="hidden">
         <div class="card">
             <h3>🎥 Live Camera & Remote Control</h3>
-            <button id="camBtn" onclick="toggleCamera()" class="hidden">📷 Camera On Korun (Camera Phone)</button>
+            <!-- Camera status message for Camera Phone -->
+            <div id="cameraStatusMsg" class="status-text hidden" style="color: #28a745; margin-bottom: 10px;">Camera Connected & Ready</div>
             
             <!-- Remote Camera Controls for Controller Phone -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
+                <button onclick="sendCamCommand('toggle-camera')" id="camToggleBtn" style="background: #28a745;">📷 Camera On/Off (Remote)</button>
                 <div class="btn-group">
                     <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
                     <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
@@ -74,7 +76,7 @@
 
             <!-- Video Wrapper with Status Overlay -->
             <div id="videoWrapper" class="video-container hidden">
-                <div id="videoOverlay" class="video-overlay">Camera Paused</div>
+                <div id="videoOverlay" class="video-overlay">Waiting for Controller to turn on Camera...</div>
                 <video id="remoteVideo" autoplay playsinline></video>
             </div>
             
@@ -106,13 +108,11 @@
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
-        // Auto check if URL has room code (when scanned via QR)
         window.onload = () => {
             const urlParams = new URLSearchParams(window.location.search);
             const roomParam = urlParams.get('room');
             if (roomParam) {
                 document.getElementById('joinCode').value = roomParam;
-                // Automatically join as camera source phone
                 setTimeout(() => {
                     joinAsCamera();
                 }, 500);
@@ -161,14 +161,13 @@
             document.getElementById('workspace').classList.remove('hidden');
             
             document.getElementById('videoWrapper').classList.remove('hidden');
-            document.getElementById('videoOverlay').innerText = "Waiting for camera...";
 
             if (isUserControlling) {
-                // This is the Controller Phone
                 document.getElementById('remoteControls').classList.remove('hidden');
+                document.getElementById('videoOverlay').innerText = "Click 'Camera On/Off' to start stream";
             } else {
-                // This is the Camera Phone
-                document.getElementById('camBtn').classList.remove('hidden');
+                document.getElementById('cameraStatusMsg').classList.remove('hidden');
+                document.getElementById('videoOverlay').innerText = "Waiting for Controller...";
             }
             initCanvas();
         }
@@ -251,9 +250,9 @@
             }
         }
 
-        async function toggleCamera() {
+        // Camera phone triggers camera start/pause based on Controller command
+        async function toggleCameraFromController() {
             try {
-                if (!targetPeerId) return;
                 const pc = createPeerConnection(targetPeerId);
 
                 if (!localStream) {
@@ -265,22 +264,18 @@
                     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
                     
                     await createAndSendOffer(targetPeerId);
-                    document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
-                    document.getElementById('camBtn').style.background = "#28a745";
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'resumed' }));
+                    }
                 } else {
                     const videoTrack = localStream.getVideoTracks()[0];
                     if (videoTrack) {
                         videoTrack.enabled = !videoTrack.enabled;
                         if (videoTrack.enabled) {
-                            document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
-                            document.getElementById('camBtn').style.background = "#28a745";
                             if (dataChannel && dataChannel.readyState === 'open') {
                                 dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'resumed' }));
                             }
                         } else {
-                            document.getElementById('camBtn').innerText = "📷 Camera Paused";
-                            document.getElementById('camBtn').style.background = "#ffc107";
-                            document.getElementById('camBtn').style.color = "#000";
                             if (dataChannel && dataChannel.readyState === 'open') {
                                 dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'paused' }));
                             }
@@ -293,6 +288,14 @@
         }
 
         async function handleCameraCommand(action) {
+            if (action === 'toggle-camera') {
+                // If controller clicked toggle, send command to camera phone
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'cam-cmd', action: 'toggle-camera' }));
+                }
+                return;
+            }
+
             if (!peerConnection) return;
 
             if (action === 'switch') {
@@ -393,11 +396,17 @@
                 if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
                 if (packet.type === 'clear') clearCanvasLocal();
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
-                if (packet.type === 'cam-cmd') handleCameraCommand(packet.action);
+                if (packet.type === 'cam-cmd') {
+                    if (packet.action === 'toggle-camera') {
+                        toggleCameraFromController();
+                    } else {
+                        handleCameraCommand(packet.action);
+                    }
+                }
                 if (packet.type === 'cam-status') {
                     const overlay = document.getElementById('videoOverlay');
                     if (packet.status === 'paused') {
-                        overlay.innerText = "Camera Paused";
+                        overlay.innerText = "Camera Paused by Controller";
                         overlay.classList.remove('hidden');
                     } else {
                         overlay.classList.add('hidden');
