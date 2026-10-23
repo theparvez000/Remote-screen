@@ -15,40 +15,55 @@
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
         #remoteVideo { width: 100%; max-width: 480px; border: 2px solid #333; margin-top: 15px; background: #000; border-radius: 8px; }
         #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
-        .chat-box { background: #222; height: 150px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
+        .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <h2>📱 Remote Interactive Hub</h2>
+    <h2>📱 Remote Camera & Interactive Hub</h2>
 
     <!-- Connection Setup -->
     <div id="setup-card" class="card">
         <h3>Connection Mode Select Korun</h3>
-        <button onclick="startHost()">1. Ei phone theke Host code generate korun</button>
+        <button onclick="startHost()">1. Ei phone Host (Camera Source)</button>
         <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinRoom()">2. Generate kora code diye connect korun</button>
+        <button onclick="joinRoom()">2. Second phone theke Join korun</button>
     </div>
 
     <!-- Host Display Code -->
     <div id="host-card" class="card hidden">
         <h3>Aponar connection pin:</h3>
         <div class="code-display" id="generatedCode">------</div>
-        <p>2nd phone-e ei pin-ti diye connect korun.</p>
+        <p>Second phone-e ei pin diye connect korun.</p>
     </div>
 
     <!-- Connected Workspace -->
     <div id="workspace" class="hidden">
         <div class="card">
-            <h3>🎥 Live Stream & Whiteboard</h3>
-            <button id="camBtn" onclick="toggleCamera()">📷 Camera Share Korun (Host Only)</button>
+            <h3>🎥 Live Camera & Remote Control</h3>
+            <button id="camBtn" onclick="toggleCamera()">📷 Camera On Korun (Host)</button>
+            
+            <!-- Remote Camera Controls for Viewer -->
+            <div id="remoteControls" class="hidden" style="margin-top: 10px;">
+                <div class="btn-group">
+                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
+                    <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
+                    <button onclick="sendCamCommand('zoom-out')" style="background: #ffc107; color: #000;">🔍 Zoom -</button>
+                </div>
+                <div class="btn-group">
+                    <button onclick="captureSnapshot()" style="background: #28a745;">📸 Capture Photo</button>
+                    <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
+                </div>
+            </div>
+
             <video id="remoteVideo" autoplay playsinline class="hidden"></video>
             
             <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
             <canvas id="paintCanvas" width="320" height="240"></canvas>
-            <button onclick="clearCanvas()" style="background: #dc3545;">Canvas Clear Korun</button>
+            <button onclick="clearCanvas()" style="background: #6c757d;">Canvas Clear Korun</button>
         </div>
 
         <div class="card">
@@ -66,6 +81,10 @@
         let localStream;
         let targetPeerId;
         let isHost = false;
+        let useFrontCamera = false;
+        let currentZoom = 1;
+        let mediaRecorder;
+        let recordedChunks = [];
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
@@ -102,8 +121,12 @@
             document.getElementById('setup-card').classList.add('hidden');
             document.getElementById('host-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
-            if (!isHost) {
+            
+            if (isHost) {
+                document.getElementById('camBtnstyle').display = 'block';
+            } else {
                 document.getElementById('camBtn').style.display = 'none';
+                document.getElementById('remoteControls').classList.remove('hidden');
             }
             initCanvas();
         }
@@ -124,7 +147,6 @@
             if (isInitiator) {
                 dataChannel = peerConnection.createDataChannel("hubData");
                 bindDataChannelEvents();
-
                 createAndSendOffer(targetId);
             } else {
                 peerConnection.ondatachannel = (e) => {
@@ -156,16 +178,95 @@
         async function toggleCamera() {
             try {
                 if (!localStream) {
-                    localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+                    const constraints = {
+                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                        audio: true
+                    };
+                    localStream = await navigator.mediaDevices.getUserMedia(constraints);
                     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-                    
-                    if (targetPeerId) {
-                        createAndSendOffer(targetPeerId);
-                    }
-                    alert("Camera stream viewer device-e pathano hoyeche!");
+                    if (targetPeerId) createAndSendOffer(targetPeerId);
+                    document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
                 }
             } catch (err) {
-                alert("Camera on kora sombhob hoyni: " + err.message);
+                alert("Camera error: " + err.message);
+            }
+        }
+
+        // Host side camera controls execution
+        function handleCameraCommand(action) {
+            if (!localStream) return;
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (!videoTrack) return;
+
+            if (action === 'switch') {
+                useFrontCamera = !useFrontCamera;
+                localStream.getTracks().forEach(track => track.stop());
+                navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                    audio: true
+                }).then(newStream => {
+                    localStream = newStream;
+                    const newVideoTrack = localStream.getVideoTracks()[0];
+                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (sender) sender.replaceTrack(newVideoTrack);
+                });
+            } else if (action === 'zoom-in' || action === 'zoom-out') {
+                const capabilities = videoTrack.getCapabilities();
+                if (capabilities.zoom) {
+                    currentZoom = action === 'zoom-in' ? Math.min(currentZoom + 0.5, capabilities.zoom.max) : Math.max(currentZoom - 0.5, capabilities.zoom.min);
+                    videoTrack.applyConstraints({ advanced: [{ zoom: currentZoom }] });
+                }
+            }
+        }
+
+        function sendCamCommand(action) {
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'cam-cmd', action }));
+            }
+        }
+
+        // Viewer side capture & record
+        function captureSnapshot() {
+            const video = document.getElementById('remoteVideo');
+            if (!video.srcObject) return alert('Video stream paoa jacche na!');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const link = document.createElement('a');
+            link.download = 'snapshot.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function toggleRecording() {
+            const video = document.getElementById('remoteVideo');
+            const btn = document.getElementById('recBtn');
+            if (!video.srcObject) return alert('Video stream paoa jacche na!');
+
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                recordedChunks = [];
+                mediaRecorder = new MediaRecorder(video.srcObject);
+                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'recorded-stream.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                };
+                mediaRecorder.start();
+                btn.innerText = "⏹️ Stop Record";
+                btn.style.background = "#ffc107";
+            } else {
+                mediaRecorder.stop();
+                btn.innerText = "⏺️ Record Video";
+                btn.style.background = "#dc3545";
             }
         }
 
@@ -175,6 +276,7 @@
                 if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
                 if (packet.type === 'clear') clearCanvasLocal();
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
+                if (packet.type === 'cam-cmd') handleCameraCommand(packet.action);
             };
         }
 
