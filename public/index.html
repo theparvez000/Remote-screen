@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Remote Screen Share & Control</title>
+    <title>Mobile Remote Stream</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -13,21 +13,21 @@
         button:hover { background: #0056b3; }
         input { width: 100%; padding: 12px; font-size: 18px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
-        #remoteVideo { width: 100%; max-width: 900px; border: 2px solid #333; margin-top: 20px; background: #000; border-radius: 8px; cursor: crosshair; }
+        #remoteVideo { width: 100%; max-width: 900px; border: 2px solid #333; margin-top: 20px; background: #000; border-radius: 8px; }
         .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <h1>📱 Remote Screen Stream</h1>
+    <h1>📱 Mobile Live Remote Stream</h1>
 
     <div id="setup-card" class="card">
         <h3>আপনি কি করতে চান?</h3>
-        <button onclick="startSharing()">১. এই ডিভাইসের স্ক্রিন শেয়ার করুন</button>
+        <button onclick="startSharing()">১. এই ফোনের ক্যামেরা/স্ট্রিম অন করুন</button>
         <hr style="margin: 20px 0; border-color: #333;">
-        <p>অথবা অন্য ডিভাইসে রিমোট কন্ট্রোল করতে কোড দিন:</p>
+        <p>অথবা অন্য ডিভাইসের স্ট্রিম দেখতে কোড দিন:</p>
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinRoom()">২. রিমোট স্ক্রিনে কানেক্ট করুন</button>
+        <button onclick="joinRoom()">২. রিমোট স্ট্রিমে কানেক্ট করুন</button>
     </div>
 
     <div id="host-card" class="card hidden">
@@ -37,14 +37,13 @@
     </div>
 
     <div id="viewer-container" class="hidden">
-        <h3>রিমোট স্ক্রিন ভিউ ও কন্ট্রোল</h3>
+        <h3>রিমোট লাইভ স্ট্রিম ফিড</h3>
         <video id="remoteVideo" autoplay playsinline></video>
     </div>
 
     <script>
         const socket = io();
         let peerConnection;
-        let dataChannel;
         let localStream;
         let targetPeerId;
 
@@ -54,13 +53,14 @@
 
         async function startSharing() {
             try {
-                localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                // মোবাইলে কাজ করার জন্য getUserMedia (Camera/Mic) ব্যবহার করা হলো
+                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
                 document.getElementById('setup-card').classList.add('hidden');
                 document.getElementById('host-card').classList.remove('hidden');
 
                 socket.emit('create-room');
             } catch (err) {
-                alert('স্ক্রিন পারমিশন দেওয়া হয়নি বা সাপোর্ট করছে না: ' + err.message);
+                alert('ক্যামেরা পারমিশন দেওয়া হয়নি বা সাপোর্ট করছে না: ' + err.message);
             }
         }
 
@@ -73,12 +73,6 @@
             peerConnection = new RTCPeerConnection(configuration);
 
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-            dataChannel = peerConnection.createDataChannel("control");
-            dataChannel.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                console.log("Remote Touch Command Received:", data);
-            };
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
@@ -104,10 +98,6 @@
 
             peerConnection = new RTCPeerConnection(configuration);
 
-            peerConnection.ondatachannel = (event) => {
-                dataChannel = event.channel;
-            };
-
             peerConnection.ontrack = (event) => {
                 document.getElementById('remoteVideo').srcObject = event.streams[0];
             };
@@ -130,17 +120,6 @@
             } else if (signal.candidate) {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
             }
-        });
-
-        const remoteVideo = document.getElementById('remoteVideo');
-        remoteVideo.addEventListener('click', (e) => {
-            if (!dataChannel || dataChannel.readyState !== 'open') return;
-
-            const rect = remoteVideo.getBoundingClientRect();
-            const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-            const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-            dataChannel.send(JSON.stringify({ type: 'click', x: xPercent, y: yPercent }));
         });
 
         socket.on('error-msg', (msg) => alert(msg));
