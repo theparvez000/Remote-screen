@@ -43,7 +43,7 @@
     <div id="workspace" class="hidden">
         <div class="card">
             <h3>🎥 Live Stream & Whiteboard</h3>
-            <button onclick="toggleCamera()">📷 Camera On/Off Korun</button>
+            <button id="camBtn" onclick="toggleCamera()">📷 Camera Share Korun (Host Only)</button>
             <video id="remoteVideo" autoplay playsinline class="hidden"></video>
             
             <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
@@ -64,6 +64,7 @@
         let peerConnection;
         let dataChannel;
         let localStream;
+        let targetPeerId;
         let isHost = false;
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
@@ -86,11 +87,13 @@
         }
 
         socket.on('room-joined', ({ hostId }) => {
+            targetPeerId = hostId;
             initWorkspace();
             setupPeerConnection(hostId, false);
         });
 
         socket.on('viewer-joined', ({ viewerId }) => {
+            targetPeerId = viewerId;
             initWorkspace();
             setupPeerConnection(viewerId, true);
         });
@@ -99,6 +102,9 @@
             document.getElementById('setup-card').classList.add('hidden');
             document.getElementById('host-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
+            if (!isHost) {
+                document.getElementById('camBtn').style.display = 'none';
+            }
             initCanvas();
         }
 
@@ -119,16 +125,19 @@
                 dataChannel = peerConnection.createDataChannel("hubData");
                 bindDataChannelEvents();
 
-                peerConnection.createOffer().then(offer => {
-                    peerConnection.setLocalDescription(offer);
-                    socket.emit('signal', { to: targetId, signal: { sdp: offer } });
-                });
+                createAndSendOffer(targetId);
             } else {
                 peerConnection.ondatachannel = (e) => {
                     dataChannel = e.channel;
                     bindDataChannelEvents();
                 };
             }
+        }
+
+        async function createAndSendOffer(targetId) {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('signal', { to: targetId, signal: { sdp: offer } });
         }
 
         socket.on('signal', async ({ from, signal }) => {
@@ -147,10 +156,13 @@
         async function toggleCamera() {
             try {
                 if (!localStream) {
-                    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
                     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-                    document.getElementById('remoteVideo').classList.remove('hidden');
-                    document.getElementById('remoteVideo').srcObject = localStream;
+                    
+                    if (targetPeerId) {
+                        createAndSendOffer(targetPeerId);
+                    }
+                    alert("Camera stream viewer device-e pathano hoyeche!");
                 }
             } catch (err) {
                 alert("Camera on kora sombhob hoyni: " + err.message);
