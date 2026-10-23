@@ -49,7 +49,7 @@
             <!-- Remote Camera Controls for Viewer -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
                 <div class="btn-group">
-                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Lens Switch</button>
+                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back Switch</button>
                     <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
                     <button onclick="sendCamCommand('zoom-out')" style="background: #ffc107; color: #000;">🔍 Zoom -</button>
                 </div>
@@ -82,8 +82,7 @@
         let localStream;
         let targetPeerId;
         let isHost = false;
-        let videoDevices = [];
-        let currentDeviceIndex = 0;
+        let useFrontCamera = false;
         let currentZoom = 1;
         let torchOn = false;
         let mediaRecorder;
@@ -192,11 +191,8 @@
                 if (!targetPeerId) return alert('Kono device connect hoyni!');
                 const pc = createPeerConnection(targetPeerId);
 
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                videoDevices = devices.filter(d => d.kind === 'videoinput');
-
                 const constraints = {
-                    video: videoDevices.length > 0 ? { deviceId: { exact: videoDevices[currentDeviceIndex].deviceId } } : { facingMode: 'environment' },
+                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
                     audio: true
                 };
 
@@ -211,36 +207,39 @@
         }
 
         async function handleCameraCommand(action) {
-            if (!localStream) return;
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (!videoTrack) return;
+            if (!peerConnection) return;
 
             if (action === 'switch') {
-                if (videoDevices.length > 1) {
-                    currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
-                    localStream.getTracks().forEach(track => track.stop());
-                    
-                    try {
-                        localStream = await navigator.mediaDevices.getUserMedia({
-                            video: { deviceId: { exact: videoDevices[currentDeviceIndex].deviceId } },
-                            audio: true
-                        });
-                        const newVideoTrack = localStream.getVideoTracks()[0];
-                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                        if (sender) sender.replaceTrack(newVideoTrack);
-                    } catch (e) {
-                        alert("Lens switch error: " + e.message);
+                useFrontCamera = !useFrontCamera;
+                try {
+                    if (localStream) {
+                        localStream.getTracks().forEach(track => track.stop());
                     }
-                } else {
-                    alert("Onno kono camera lens paoa jayni!");
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                        audio: true
+                    });
+                    const newVideoTrack = localStream.getVideoTracks()[0];
+                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (sender) {
+                        await sender.replaceTrack(newVideoTrack);
+                    }
+                } catch (e) {
+                    alert("Camera switch error: " + e.message);
                 }
             } else if (action === 'zoom-in' || action === 'zoom-out') {
+                if (!localStream) return;
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (!videoTrack) return;
                 const capabilities = videoTrack.getCapabilities();
                 if (capabilities.zoom) {
                     currentZoom = action === 'zoom-in' ? Math.min(currentZoom + 0.5, capabilities.zoom.max) : Math.max(currentZoom - 0.5, capabilities.zoom.min);
                     videoTrack.applyConstraints({ advanced: [{ zoom: currentZoom }] });
                 }
             } else if (action === 'torch') {
+                if (!localStream) return;
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (!videoTrack) return;
                 const capabilities = videoTrack.getCapabilities();
                 if (capabilities.torch) {
                     torchOn = !torchOn;
