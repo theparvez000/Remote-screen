@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Screen Share & Control</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
+        .card { background: #1e1e1e; max-width: 450px; margin: 20px auto; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        button { background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 10px; }
+        button:hover { background: #0056b3; }
+        input { width: 100%; padding: 12px; font-size: 18px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
+        .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
+        #remoteVideo { width: 100%; max-width: 900px; border: 2px solid #333; margin-top: 20px; background: #000; border-radius: 8px; cursor: crosshair; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>📱 Remote Screen Stream</h1>
+
+    <div id="setup-card" class="card">
+        <h3>আপনি কি করতে চান?</h3>
+        <button onclick="startSharing()">১. এই ডিভাইসের স্ক্রিন শেয়ার করুন</button>
+        <hr style="margin: 20px 0; border-color: #333;">
+        <p>অথবা অন্য ডিভাইসে রিমোট কন্ট্রোল করতে কোড দিন:</p>
+        <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
+        <button onclick="joinRoom()">২. রিমোট স্ক্রিনে কানেক্ট করুন</button>
+    </div>
+
+    <div id="host-card" class="card hidden">
+        <h3>আপনার কানেকশন কোড:</h3>
+        <div class="code-display" id="generatedCode">------</div>
+        <p>২য় ডিভাইসে এই পিনটি দিয়ে কানেক্ট করুন।</p>
+    </div>
+
+    <div id="viewer-container" class="hidden">
+        <h3>রিমোট স্ক্রিন ভিউ ও কন্ট্রোল</h3>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+
+    <script>
+        const socket = io();
+        let peerConnection;
+        let dataChannel;
+        let localStream;
+        let targetPeerId;
+
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19002' }]
+        };
+
+        async function startSharing() {
+            try {
+                localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                document.getElementById('setup-card').classList.add('hidden');
+                document.getElementById('host-card').classList.remove('hidden');
+
+                socket.emit('create-room');
+            } catch (err) {
+                alert('স্ক্রিন পারমিশন দেওয়া হয়নি বা সাপোর্ট করছে না: ' + err.message);
+            }
+        }
+
+        socket.on('room-created', ({ roomCode }) => {
+            document.getElementById('generatedCode').innerText = roomCode;
+        });
+
+        socket.on('viewer-joined', async ({ viewerId }) => {
+            targetPeerId = viewerId;
+            peerConnection = new RTCPeerConnection(configuration);
+
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            dataChannel = peerConnection.createDataChannel("control");
+            dataChannel.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                console.log("Remote Touch Command Received:", data);
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { to: viewerId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('signal', { to: viewerId, signal: { sdp: offer } });
+        });
+
+        function joinRoom() {
+            const code = document.getElementById('joinCode').value;
+            if (!code) return alert('পিন কোড দিন!');
+            socket.emit('join-room', { roomCode: code });
+        }
+
+        socket.on('room-joined', ({ hostId }) => {
+            targetPeerId = hostId;
+            document.getElementById('setup-card').classList.add('hidden');
+            document.getElementById('viewer-container').classList.remove('hidden');
+
+            peerConnection = new RTCPeerConnection(configuration);
+
+            peerConnection.ondatachannel = (event) => {
+                dataChannel = event.channel;
+            };
+
+            peerConnection.ontrack = (event) => {
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { to: hostId, signal: { candidate: event.candidate } });
+                }
+            };
+        });
+
+        socket.on('signal', async ({ from, signal }) => {
+            if (signal.sdp) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                if (signal.sdp.type === 'offer') {
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    socket.emit('signal', { to: from, signal: { sdp: answer } });
+                }
+            } else if (signal.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
+        });
+
+        const remoteVideo = document.getElementById('remoteVideo');
+        remoteVideo.addEventListener('click', (e) => {
+            if (!dataChannel || dataChannel.readyState !== 'open') return;
+
+            const rect = remoteVideo.getBoundingClientRect();
+            const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
+            const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
+
+            dataChannel.send(JSON.stringify({ type: 'click', x: xPercent, y: yPercent }));
+        });
+
+        socket.on('error-msg', (msg) => alert(msg));
+    </script>
+</body>
+</html>
+
