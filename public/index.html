@@ -115,7 +115,7 @@
         function joinRoom() {
             const code = document.getElementById('joinCode').value;
             if (!code) {
-                document.getElementById('statusMsginnerText = "Pin code din!";
+                document.getElementById('statusMsg').innerText = "Pin code din!";
                 return;
             }
             socket.emit('join-room', { roomCode: code });
@@ -162,7 +162,6 @@
                 videoElem.srcObject = e.streams[0];
                 document.getElementById('videoOverlay').classList.add('hidden');
 
-                // Track mute/unmute or end event for camera pause detection
                 e.streams[0].getVideoTracks()[0].onmute = () => {
                     document.getElementById('videoOverlay').innerText = "Camera Paused";
                     document.getElementById('videoOverlay').classList.remove('hidden');
@@ -213,7 +212,6 @@
             }
         });
 
-        // Handle peer disconnection / host left
         socket.on('peer-disconnected', () => {
             handleHostLeft();
         });
@@ -246,7 +244,6 @@
                     document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
                     document.getElementById('camBtn').style.background = "#28a745";
                 } else {
-                    // Toggle camera pause/resume
                     const videoTrack = localStream.getVideoTracks()[0];
                     if (videoTrack) {
                         videoTrack.enabled = !videoTrack.enabled;
@@ -267,7 +264,6 @@
                     }
                 }
             } catch (err) {
-                // Silent error or clean status instead of ugly alert
                 console.error("Camera error:", err);
             }
         }
@@ -434,13 +430,6 @@
 
         function clearCanvas() {
             clearCanvasLocal();
-            if (dataCh
-awing }));
-            }
-        }
-
-        function clearCanvas() {
-            clearCanvasLocal();
             if (dataChannel && dataChannel.readyState === 'open') {
                 dataChannel.send(JSON.stringify({ type: 'clear' }));
             }
@@ -470,4 +459,3 @@ awing }));
     </script>
 </body>
 </html>
-
