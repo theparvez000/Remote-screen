@@ -122,16 +122,15 @@
             document.getElementById('host-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
             
-            if (isHost) {
-                document.getElementById('camBtnstyle').display = 'block';
-            } else {
+            if (!isHost) {
                 document.getElementById('camBtn').style.display = 'none';
                 document.getElementById('remoteControls').classList.remove('hidden');
             }
             initCanvas();
         }
 
-        function setupPeerConnection(targetId, isInitiator) {
+        function createPeerConnection(targetId) {
+            if (peerConnection) return peerConnection;
             peerConnection = new RTCPeerConnection(configuration);
 
             peerConnection.onicecandidate = (e) => {
@@ -144,12 +143,18 @@
                 videoElem.srcObject = e.streams[0];
             };
 
+            return peerConnection;
+        }
+
+        function setupPeerConnection(targetId, isInitiator) {
+            const pc = createPeerConnection(targetId);
+
             if (isInitiator) {
-                dataChannel = peerConnection.createDataChannel("hubData");
+                dataChannel = pc.createDataChannel("hubData");
                 bindDataChannelEvents();
                 createAndSendOffer(targetId);
             } else {
-                peerConnection.ondatachannel = (e) => {
+                pc.ondatachannel = (e) => {
                     dataChannel = e.channel;
                     bindDataChannelEvents();
                 };
@@ -157,34 +162,44 @@
         }
 
         async function createAndSendOffer(targetId) {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+            const pc = createPeerConnection(targetId);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
             socket.emit('signal', { to: targetId, signal: { sdp: offer } });
         }
 
         socket.on('signal', async ({ from, signal }) => {
+            targetPeerId = from;
+            const pc = createPeerConnection(from);
+
             if (signal.sdp) {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
                 if (signal.sdp.type === 'offer') {
-                    const answer = await peerConnection.createAnswer();
-                    await peerConnection.setLocalDescription(answer);
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
                     socket.emit('signal', { to: from, signal: { sdp: answer } });
                 }
             } else if (signal.candidate) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
             }
         });
 
         async function toggleCamera() {
             try {
+                if (!targetPeerId) {
+                    return alert('Kono device connect hoyni!');
+                }
+                const pc = createPeerConnection(targetPeerId);
+
                 if (!localStream) {
                     const constraints = {
                         video: { facingMode: useFrontCamera ? 'user' : 'environment' },
                         audio: true
                     };
                     localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-                    if (targetPeerId) createAndSendOffer(targetPeerId);
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                    
+                    await createAndSendOffer(targetPeerId);
                     document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
                 }
             } catch (err) {
@@ -192,7 +207,6 @@
             }
         }
 
-        // Host side camera controls execution
         function handleCameraCommand(action) {
             if (!localStream) return;
             const videoTrack = localStream.getVideoTracks()[0];
@@ -225,7 +239,6 @@
             }
         }
 
-        // Viewer side capture & record
         function captureSnapshot() {
             const video = document.getElementById('remoteVideo');
             if (!video.srcObject) return alert('Video stream paoa jacche na!');
@@ -271,6 +284,7 @@
         }
 
         function bindDataChannelEvents() {
+            if (!dataChannel) return;
             dataChannel.onmessage = (e) => {
                 const packet = JSON.parse(e.data);
                 if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
@@ -283,6 +297,7 @@
         let canvas, ctx, drawing = false;
         function initCanvas() {
             canvas = document.getElementById('paintCanvas');
+            if (!canvas) return;
             ctx = canvas.getContext('2d');
 
             const startDraw = (e) => { drawing = true; draw(e); };
@@ -333,7 +348,7 @@
         }
 
         function clearCanvasLocal() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
 
         function sendMessage() {
