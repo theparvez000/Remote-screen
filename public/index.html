@@ -13,11 +13,16 @@
         button:hover { background: #0056b3; }
         input { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
-        #remoteVideo { width: 100%; max-width: 480px; border: 2px solid #333; margin-top: 15px; background: #000; border-radius: 8px; }
+        
+        .video-container { position: relative; width: 100%; max-width: 480px; margin: 15px auto; background: #000; border-radius: 8px; border: 2px solid #333; overflow: hidden; }
+        #remoteVideo { width: 100%; display: block; background: #000; }
+        .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; font-size: 20px; font-weight: bold; color: #ffc107; z-index: 10; }
+        .hidden { display: none !important; }
+
         #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
         .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
         .btn-group { display: flex; gap: 10px; margin-top: 10px; }
-        .hidden { display: none; }
+        .status-text { font-size: 14px; color: #aaa; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -31,6 +36,7 @@
         <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
         <button onclick="joinRoom()">2. Second phone theke Join korun</button>
+        <div id="statusMsg" class="status-text"></div>
     </div>
 
     <!-- Host Display Code -->
@@ -38,6 +44,7 @@
         <h3>Aponar connection pin:</h3>
         <div class="code-display" id="generatedCode">------</div>
         <p>Second phone-e ei pin diye connect korun.</p>
+        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for viewer...</div>
     </div>
 
     <!-- Connected Workspace -->
@@ -49,7 +56,7 @@
             <!-- Remote Camera Controls for Viewer -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
                 <div class="btn-group">
-                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back Switch</button>
+                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
                     <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
                     <button onclick="sendCamCommand('zoom-out')" style="background: #ffc107; color: #000;">🔍 Zoom -</button>
                 </div>
@@ -60,7 +67,11 @@
                 <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
             </div>
 
-            <video id="remoteVideo" autoplay playsinline class="hidden"></video>
+            <!-- Video Wrapper with Status Overlay -->
+            <div id="videoWrapper" class="video-container hidden">
+                <div id="videoOverlay" class="video-overlay">Camera Paused</div>
+                <video id="remoteVideo" autoplay playsinline></video>
+            </div>
             
             <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
             <canvas id="paintCanvas" width="320" height="240"></canvas>
@@ -103,7 +114,10 @@
 
         function joinRoom() {
             const code = document.getElementById('joinCode').value;
-            if (!code) return alert('Pin code din!');
+            if (!code) {
+                document.getElementById('statusMsginnerText = "Pin code din!";
+                return;
+            }
             socket.emit('join-room', { roomCode: code });
         }
 
@@ -115,6 +129,7 @@
 
         socket.on('viewer-joined', ({ viewerId }) => {
             targetPeerId = viewerId;
+            document.getElementById('connectionStatus').innerText = "Viewer connected successfully!";
             initWorkspace();
             setupPeerConnection(viewerId, true);
         });
@@ -124,6 +139,9 @@
             document.getElementById('host-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
             
+            document.getElementById('videoWrapper').classList.remove('hidden');
+            document.getElementById('videoOverlay').innerText = "Waiting for camera...";
+
             if (!isHost) {
                 document.getElementById('camBtn').style.display = 'none';
                 document.getElementById('remoteControls').classList.remove('hidden');
@@ -141,8 +159,17 @@
 
             peerConnection.ontrack = (e) => {
                 const videoElem = document.getElementById('remoteVideo');
-                videoElem.classList.remove('hidden');
                 videoElem.srcObject = e.streams[0];
+                document.getElementById('videoOverlay').classList.add('hidden');
+
+                // Track mute/unmute or end event for camera pause detection
+                e.streams[0].getVideoTracks()[0].onmute = () => {
+                    document.getElementById('videoOverlay').innerText = "Camera Paused";
+                    document.getElementById('videoOverlay').classList.remove('hidden');
+                };
+                e.streams[0].getVideoTracks()[0].onunmute = () => {
+                    document.getElementById('videoOverlay').classList.add('hidden');
+                };
             };
 
             return peerConnection;
@@ -186,23 +213,62 @@
             }
         });
 
+        // Handle peer disconnection / host left
+        socket.on('peer-disconnected', () => {
+            handleHostLeft();
+        });
+
+        function handleHostLeft() {
+            const overlay = document.getElementById('videoOverlay');
+            overlay.innerText = "Host Left";
+            overlay.classList.remove('hidden');
+            const videoElem = document.getElementById('remoteVideo');
+            if (videoElem.srcObject) {
+                videoElem.srcObject.getTracks().forEach(t => t.stop());
+                videoElem.srcObject = null;
+            }
+        }
+
         async function toggleCamera() {
             try {
-                if (!targetPeerId) return alert('Kono device connect hoyni!');
+                if (!targetPeerId) return;
                 const pc = createPeerConnection(targetPeerId);
 
-                const constraints = {
-                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
-                    audio: true
-                };
-
-                localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                
-                await createAndSendOffer(targetPeerId);
-                document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
+                if (!localStream) {
+                    const constraints = {
+                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                        audio: true
+                    };
+                    localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                    
+                    await createAndSendOffer(targetPeerId);
+                    document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
+                    document.getElementById('camBtn').style.background = "#28a745";
+                } else {
+                    // Toggle camera pause/resume
+                    const videoTrack = localStream.getVideoTracks()[0];
+                    if (videoTrack) {
+                        videoTrack.enabled = !videoTrack.enabled;
+                        if (videoTrack.enabled) {
+                            document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
+                            document.getElementById('camBtn').style.background = "#28a745";
+                            if (dataChannel && dataChannel.readyState === 'open') {
+                                dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'resumed' }));
+                            }
+                        } else {
+                            document.getElementById('camBtn').innerText = "📷 Camera Paused";
+                            document.getElementById('camBtn').style.background = "#ffc107";
+                            document.getElementById('camBtn').style.color = "#000";
+                            if (dataChannel && dataChannel.readyState === 'open') {
+                                dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'paused' }));
+                            }
+                        }
+                    }
+                }
             } catch (err) {
-                alert("Camera error: " + err.message);
+                // Silent error or clean status instead of ugly alert
+                console.error("Camera error:", err);
             }
         }
 
@@ -225,7 +291,7 @@
                         await sender.replaceTrack(newVideoTrack);
                     }
                 } catch (e) {
-                    alert("Camera switch error: " + e.message);
+                    console.error("Switch error:", e);
                 }
             } else if (action === 'zoom-in' || action === 'zoom-out') {
                 if (!localStream) return;
@@ -244,8 +310,6 @@
                 if (capabilities.torch) {
                     torchOn = !torchOn;
                     videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-                } else {
-                    alert("Ei device-e flashlight support kore na!");
                 }
             }
         }
@@ -258,7 +322,7 @@
 
         function captureSnapshot() {
             const video = document.getElementById('remoteVideo');
-            if (!video.srcObject) return alert('Video stream paoa jacche na!');
+            if (!video.srcObject) return;
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
@@ -273,7 +337,7 @@
         function toggleRecording() {
             const video = document.getElementById('remoteVideo');
             const btn = document.getElementById('recBtn');
-            if (!video.srcObject) return alert('Video stream paoa jacche na!');
+            if (!video.srcObject) return;
 
             if (!mediaRecorder || mediaRecorder.state === 'inactive') {
                 recordedChunks = [];
@@ -293,10 +357,12 @@
                 mediaRecorder.start();
                 btn.innerText = "⏹️ Stop Record";
                 btn.style.background = "#ffc107";
+                btn.style.color = "#000";
             } else {
                 mediaRecorder.stop();
                 btn.innerText = "⏺️ Record Video";
                 btn.style.background = "#dc3545";
+                btn.style.color = "#fff";
             }
         }
 
@@ -308,6 +374,15 @@
                 if (packet.type === 'clear') clearCanvasLocal();
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
                 if (packet.type === 'cam-cmd') handleCameraCommand(packet.action);
+                if (packet.type === 'cam-status') {
+                    const overlay = document.getElementById('videoOverlay');
+                    if (packet.status === 'paused') {
+                        overlay.innerText = "Camera Paused";
+                        overlay.classList.remove('hidden');
+                    } else {
+                        overlay.classList.add('hidden');
+                    }
+                }
             };
         }
 
@@ -359,6 +434,13 @@
 
         function clearCanvas() {
             clearCanvasLocal();
+            if (dataCh
+awing }));
+            }
+        }
+
+        function clearCanvas() {
+            clearCanvasLocal();
             if (dataChannel && dataChannel.readyState === 'open') {
                 dataChannel.send(JSON.stringify({ type: 'clear' }));
             }
@@ -385,8 +467,6 @@
             chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
             chatBox.scrollTop = chatBox.scrollHeight;
         }
-
-        socket.on('error-msg', (msg) => alert(msg));
     </script>
 </body>
 </html>
