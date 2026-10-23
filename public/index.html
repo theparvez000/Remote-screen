@@ -3,111 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mobile Remote Stream</title>
+    <title>Mobile Remote Interactive Hub</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-        .card { background: #1e1e1e; max-width: 450px; margin: 20px auto; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 15px; }
+        .card { background: #1e1e1e; max-width: 500px; margin: 15px auto; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         button { background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 10px; }
         button:hover { background: #0056b3; }
-        input { width: 100%; padding: 12px; font-size: 18px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
+        input { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
-        #remoteVideo { width: 100%; max-width: 900px; border: 2px solid #333; margin-top: 20px; background: #000; border-radius: 8px; }
+        #remoteVideo { width: 100%; max-width: 480px; border: 2px solid #333; margin-top: 15px; background: #000; border-radius: 8px; }
+        #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
+        .chat-box { background: #222; height: 150px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
         .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <h1>📱 Mobile Live Remote Stream</h1>
+    <h2>📱 Remote Interactive Hub</h2>
 
+    <!-- Connection Setup -->
     <div id="setup-card" class="card">
-        <h3>আপনি কি করতে চান?</h3>
-        <button onclick="startSharing()">১. এই ফোনের ক্যামেরা/স্ট্রিম অন করুন</button>
-        <hr style="margin: 20px 0; border-color: #333;">
-        <p>অথবা অন্য ডিভাইসের স্ট্রিম দেখতে কোড দিন:</p>
+        <h3>Connection Mode Select Korun</h3>
+        <button onclick="startHost()">1. Ei phone theke Host code generate korun</button>
+        <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinRoom()">২. রিমোট স্ট্রিমে কানেক্ট করুন</button>
+        <button onclick="joinRoom()">2. Generate kora code diye connect korun</button>
     </div>
 
+    <!-- Host Display Code -->
     <div id="host-card" class="card hidden">
-        <h3>আপনার কানেকশন কোড:</h3>
+        <h3>Aponar connection pin:</h3>
         <div class="code-display" id="generatedCode">------</div>
-        <p>২য় ডিভাইসে এই পিনটি দিয়ে কানেক্ট করুন।</p>
+        <p>2nd phone-e ei pin-ti diye connect korun.</p>
     </div>
 
-    <div id="viewer-container" class="hidden">
-        <h3>রিমোট লাইভ স্ট্রিম ফিড</h3>
-        <video id="remoteVideo" autoplay playsinline></video>
+    <!-- Connected Workspace -->
+    <div id="workspace" class="hidden">
+        <div class="card">
+            <h3>🎥 Live Stream & Whiteboard</h3>
+            <button onclick="toggleCamera()">📷 Camera On/Off Korun</button>
+            <video id="remoteVideo" autoplay playsinline class="hidden"></video>
+            
+            <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
+            <canvas id="paintCanvas" width="320" height="240"></canvas>
+            <button onclick="clearCanvas()" style="background: #dc3545;">Canvas Clear Korun</button>
+        </div>
+
+        <div class="card">
+            <h3>💬 Message & Link Sync</h3>
+            <div id="chatBox" class="chat-box"></div>
+            <input type="text" id="chatInput" placeholder="Message likhun..." style="text-align: left;">
+            <button onclick="sendMessage()">Send</button>
+        </div>
     </div>
 
     <script>
         const socket = io();
         let peerConnection;
+        let dataChannel;
         let localStream;
-        let targetPeerId;
+        let isHost = false;
 
-        const configuration = {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19002' }]
-        };
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
-        async function startSharing() {
-            try {
-                // মোবাইলে কাজ করার জন্য getUserMedia (Camera/Mic) ব্যবহার করা হলো
-                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
-                document.getElementById('setup-card').classList.add('hidden');
-                document.getElementById('host-card').classList.remove('hidden');
-
-                socket.emit('create-room');
-            } catch (err) {
-                alert('ক্যামেরা পারমিশন দেওয়া হয়নি বা সাপোর্ট করছে না: ' + err.message);
-            }
+        function startHost() {
+            isHost = true;
+            document.getElementById('setup-card').classList.add('hidden');
+            document.getElementById('host-card').classList.remove('hidden');
+            socket.emit('create-room');
         }
 
         socket.on('room-created', ({ roomCode }) => {
             document.getElementById('generatedCode').innerText = roomCode;
         });
 
-        socket.on('viewer-joined', async ({ viewerId }) => {
-            targetPeerId = viewerId;
-            peerConnection = new RTCPeerConnection(configuration);
-
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    socket.emit('signal', { to: viewerId, signal: { candidate: event.candidate } });
-                }
-            };
-
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            socket.emit('signal', { to: viewerId, signal: { sdp: offer } });
-        });
-
         function joinRoom() {
             const code = document.getElementById('joinCode').value;
-            if (!code) return alert('পিন কোড দিন!');
+            if (!code) return alert('Pin code din!');
             socket.emit('join-room', { roomCode: code });
         }
 
         socket.on('room-joined', ({ hostId }) => {
-            targetPeerId = hostId;
-            document.getElementById('setup-card').classList.add('hidden');
-            document.getElementById('viewer-container').classList.remove('hidden');
+            initWorkspace();
+            setupPeerConnection(hostId, false);
+        });
 
+        socket.on('viewer-joined', ({ viewerId }) => {
+            initWorkspace();
+            setupPeerConnection(viewerId, true);
+        });
+
+        function initWorkspace() {
+            document.getElementById('setup-card').classList.add('hidden');
+            document.getElementById('host-card').classList.add('hidden');
+            document.getElementById('workspace').classList.remove('hidden');
+            initCanvas();
+        }
+
+        function setupPeerConnection(targetId, isInitiator) {
             peerConnection = new RTCPeerConnection(configuration);
 
-            peerConnection.ontrack = (event) => {
-                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            peerConnection.onicecandidate = (e) => {
+                if (e.candidate) socket.emit('signal', { to: targetId, signal: { candidate: e.candidate } });
             };
 
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    socket.emit('signal', { to: hostId, signal: { candidate: event.candidate } });
-                }
+            peerConnection.ontrack = (e) => {
+                const videoElem = document.getElementById('remoteVideo');
+                videoElem.classList.remove('hidden');
+                videoElem.srcObject = e.streams[0];
             };
-        });
+
+            if (isInitiator) {
+                dataChannel = peerConnection.createDataChannel("hubData");
+                bindDataChannelEvents();
+
+                peerConnection.createOffer().then(offer => {
+                    peerConnection.setLocalDescription(offer);
+                    socket.emit('signal', { to: targetId, signal: { sdp: offer } });
+                });
+            } else {
+                peerConnection.ondatachannel = (e) => {
+                    dataChannel = e.channel;
+                    bindDataChannelEvents();
+                };
+            }
+        }
 
         socket.on('signal', async ({ from, signal }) => {
             if (signal.sdp) {
@@ -121,6 +143,102 @@
                 await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
             }
         });
+
+        async function toggleCamera() {
+            try {
+                if (!localStream) {
+                    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                    document.getElementById('remoteVideo').classList.remove('hidden');
+                    document.getElementById('remoteVideo').srcObject = localStream;
+                }
+            } catch (err) {
+                alert("Camera on kora sombhob hoyni: " + err.message);
+            }
+        }
+
+        function bindDataChannelEvents() {
+            dataChannel.onmessage = (e) => {
+                const packet = JSON.parse(e.data);
+                if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
+                if (packet.type === 'clear') clearCanvasLocal();
+                if (packet.type === 'chat') appendMessage("Remote", packet.text);
+            };
+        }
+
+        let canvas, ctx, drawing = false;
+        function initCanvas() {
+            canvas = document.getElementById('paintCanvas');
+            ctx = canvas.getContext('2d');
+
+            const startDraw = (e) => { drawing = true; draw(e); };
+            const stopDraw = () => { drawing = false; ctx.beginPath(); sendDraw(0, 0, false); };
+
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mouseup', stopDraw);
+            canvas.addEventListener('mousemove', draw);
+
+            canvas.addEventListener('touchstart', (e) => { startDraw(e.touches[0]); e.preventDefault(); });
+            canvas.addEventListener('touchend', stopDraw);
+            canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
+        }
+
+        function draw(e) {
+            if (!drawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            drawOnCanvas(x, y, true);
+            sendDraw(x, y, true);
+        }
+
+        function drawOnCanvas(x, y, isDrawing) {
+            if (!isDrawing) { ctx.beginPath(); return; }
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#007bff';
+
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function sendDraw(x, y, isDrawing) {
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'draw', x, y, isDrawing }));
+            }
+        }
+
+        function clearCanvas() {
+            clearCanvasLocal();
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'clear' }));
+            }
+        }
+
+        function clearCanvasLocal() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage("You", text);
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'chat', text }));
+            }
+            input.value = '';
+        }
+
+        function appendMessage(sender, text) {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
 
         socket.on('error-msg', (msg) => alert(msg));
     </script>
