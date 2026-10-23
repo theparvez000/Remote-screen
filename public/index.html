@@ -192,7 +192,6 @@
                 if (!targetPeerId) return alert('Kono device connect hoyni!');
                 const pc = createPeerConnection(targetPeerId);
 
-                // Get all available video input devices (multiple lenses/cameras)
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 videoDevices = devices.filter(d => d.kind === 'videoinput');
 
@@ -342,7 +341,7 @@
         }
 
         function drawOnCanvas(x, y, isDrawing) {
-            if (!isizing_check = !isDrawing) { ctx.beginPath(); return; }
+            if (!isDrawing) { ctx.beginPath(); return; }
             ctx.lineWidth = 3;
             ctx.lineCap = 'round';
             ctx.strokeStyle = '#007bff';
