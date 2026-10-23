@@ -32,6 +32,30 @@
             transition: opacity 0.3s ease;
         }
 
+        /* Motion Alert Banner */
+        .motion-alert-banner {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(220, 53, 69, 0.95);
+            color: #fff;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 30;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            animation: fadeInOut 3s forwards;
+        }
+
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translate(-50%, -10px); }
+            15% { opacity: 1; transform: translate(-50%, 0); }
+            85% { opacity: 1; transform: translate(-50%, 0); }
+            100% { opacity: 0; display: none; }
+        }
+
         .hidden { display: none !important; }
 
         #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
@@ -84,9 +108,8 @@
                 <div class="btn-group">
                     <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
                     <button onclick="sendCamCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
-                    <button onclick="captureAndEmailSnapshot()" style="background: #28a745;">📧 Email Snapshot</button>
                 </div>
-                <button id="motionBtn" onclick="toggleMotionDetection()" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
+                <button id="motionBtn" onclick="sendCamCommand('toggle-motion')" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
                 <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
             </div>
 
@@ -94,6 +117,7 @@
             <div id="videoWrapper" class="video-container hidden" onclick="handleVideoClick(event)">
                 <div id="videoOverlay" class="video-overlay">Waiting for Controller...</div>
                 <div id="laserDot" class="laser-pointer hidden"></div>
+                <div id="motionAlertContainer"></div>
                 <video id="remoteVideo" autoplay playsinline></video>
             </div>
             <p id="pointerHint" class="status-text hidden">💡 Video screen-e tap kore remote laser pointer point korun!</p>
@@ -124,7 +148,7 @@
         let mediaRecorder;
         let recordedChunks = [];
         let motionDetectionActive = false;
-        let motionInterval;
+        let motionCheckInterval;
         let lastFrameData = null;
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
@@ -218,6 +242,17 @@
             window.laserTimer = setTimeout(() => {
                 laserDot.classList.add('hidden');
             }, 2500);
+        }
+
+        function showMotionNotification(msg) {
+            const container = document.getElementById('motionAlertContainer');
+            const banner = document.createElement('div');
+            banner.className = 'motion-alert-banner';
+            banner.innerText = msg;
+            container.appendChild(banner);
+            setTimeout(() => {
+                banner.remove();
+            }, 3000);
         }
 
         function createPeerConnection(targetId) {
@@ -352,11 +387,91 @@
             }
         }
 
+        // Camera side motion detection runner
+        function toggleMotionDetectionOnCamera() {
+            motionDetectionActive = !motionDetectionActive;
+            const camVideo = document.getElementById('remoteVideo'); // on camera side, localStream is played or analyzed via hidden canvas
+
+            if (motionDetectionActive) {
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'motion-status', active: true }));
+                }
+                const tempCanvas = document.createElement('canvas');
+                const tCtx = tempCanvas.getContext('2d');
+
+                motionCheckInterval = setInterval(async () => {
+                    if (!localStream || !localStream.active) return;
+                    const track = localStream.getVideoTracks()[0];
+                    if (!track) return;
+
+                    // Capture frame from local stream
+                    const imageCapture = new ImageCapture(track);
+                    try {
+                        const bitmap = await imageCapture.grabFrame();
+                        tempCanvas.width = 160;
+                        tempCanvas.height = 120;
+                        tCtx.drawImage(bitmap, 0, 0, 160, 120);
+                        const frameData = tCtx.getImageData(0, 0, 160, 120).data;
+
+                        if (lastFrameData) {
+                            let diff = 0;
+                            for (let i = 0; i < frameData.length; i += 16) { // sample every 4th pixel
+                                diff += Math.abs(frameData[i] - lastFrameData[i]);
+                            }
+                            if (diff > 500000) { // Motion threshold
+                                // Motion detected! Capture snapshot and email
+                                triggerAutoSnapshotEmail();
+                            }
+                        }
+                        lastFrameData = frameData;
+                    } catch (err) {
+                        // fallback if ImageCapture not fully supported
+                    }
+                }, 4000);
+            } else {
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'motion-status', active: false }));
+                }
+                clearInterval(motionCheckInterval);
+            }
+        }
+
+        async function triggerAutoSnapshotEmail() {
+            try {
+                const tempCanvas = document.createElement('canvas');
+                const tCtx = tempCanvas.getContext('2d');
+                const videoTracks = localStream.getVideoTracks();
+                if (!videoTracks.length) return;
+                const imageCapture = new ImageCapture(videoTracks[0]);
+                const bitmap = await imageCapture.grabFrame();
+                tempCanvas.width = bitmap.width || 640;
+                tempCanvas.height = bitmap.height || 480;
+                tCtx.drawImage(bitmap, 0, 0, tempCanvas.width, tempCanvas.height);
+                const imgData = tempCanvas.toDataURL('image/png');
+
+                const res = await fetch('/send-snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imgData, recipient: 'theparvez000@gmail.com' })
+                });
+                const data = await res.json();
+                if (data.success && dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'motion-alert-trigger' }));
+                }
+            } catch (e) {
+                console.error("Auto email error", e);
+            }
+        }
+
         async function handleCameraCommand(action) {
             if (action === 'toggle-camera') {
                 if (dataChannel && dataChannel.readyState === 'open') {
                     dataChannel.send(JSON.stringify({ type: 'cam-cmd', action: 'toggle-camera' }));
                 }
+                return;
+            } else if (action === 'toggle-motion') {
+                // Executed on camera phone side when command received
+                toggleMotionDetectionOnCamera();
                 return;
             }
 
@@ -404,68 +519,21 @@
         }
 
         function sendCamCommand(action) {
+            if (action === 'toggle-motion') {
+                // Toggle button UI state on controller side immediately
+                const btn = document.getElementById('motionBtn');
+                motionDetectionActive = !motionDetectionActive;
+                if (motionDetectionActive) {
+                    btn.innerText = "📸 Motion Snapshot Sync: ON";
+                    btn.style.background = "#28a745";
+                } else {
+                    btn.innerText = "📸 Motion Snapshot Sync: OFF";
+                    btn.style.background = "#fd7e14";
+                }
+            }
             if (dataChannel && dataChannel.readyState === 'open') {
                 dataChannel.send(JSON.stringify({ type: 'cam-cmd', action }));
             }
-        }
-
-        function getSnapshotBase64() {
-            const video = document.getElementById('remoteVideo');
-            if (!video.srcObject) return null;
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL('image/png');
-        }
-
-        async function captureAndEmailSnapshot() {
-            const imgData = getSnapshotBase64();
-            if (!imgData) return;
-
-            try {
-                const res = await fetch('/send-snapshot', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: imgData, recipient: 'theparvez000@gmail.com' })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    appendMessage("System", "📩 Snapshot sent to theparvez000@gmail.com!");
-                }
-            } catch (e) {
-                console.error("Email send error", e);
-            }
-        }
-
-        function toggleMotionDetection() {
-            motionDetectionActive = !motionDetectionActive;
-            const btn = document.getElementById('motionBtn');
-
-            if (motionDetectionActive) {
-                btn.innerText = "📸 Motion Snapshot Sync: ON";
-                btn.style.background = "#28a745";
-                
-                motionInterval = setInterval(() => {
-                    detectMotionAndSend();
-                }, 3000); // Check every 3 seconds
-            } else {
-                btn.innerText = "📸 Motion Snapshot Sync: OFF";
-                btn.style.background = "#fd7e14";
-                clearInterval(motionInterval);
-            }
-        }
-
-        function detectMotionAndSend() {
-            const imgData = getSnapshotBase64();
-            if (!imgData) return;
-
-            if (lastFrameData && imgData !== lastFrameData) {
-                // Send snapshot via email when motion detected
-                captureAndEmailSnapshot();
-            }
-            lastFrameData = imgData;
         }
 
         function toggleRecording() {
@@ -508,6 +576,10 @@
                 if (packet.type === 'clear') clearCanvasLocal();
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
                 if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
+                if (packet.type === 'motion-alert-trigger') {
+                    showMotionNotification("⚠️ Object Detected! Image has been sent to email.");
+                    appendMessage("System", "⚠️ Motion detected! Snapshot sent to theparvez000@gmail.com");
+                }
                 if (packet.type === 'cam-cmd') {
                     if (packet.action === 'toggle-camera') {
                         toggleCameraFromController();
