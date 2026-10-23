@@ -85,7 +85,7 @@
         <div class="code-display" id="generatedCode">------</div>
         <p>Camera phone diye nicher QR Code-ti scan korun:</p>
         <div class="qr-box">
-            <img id="qrImage" src="" alt="QR Code">
+            <img id="qrImage" alt="QR Code">
         </div>
         <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phone to scan/connect...</div>
     </div>
@@ -119,7 +119,6 @@
                 <div id="laserDot" class="laser-pointer hidden"></div>
                 <div id="motionAlertContainer"></div>
                 <video id="remoteVideo" autoplay playsinline muted></video>
-                <video id="localPreview" autoplay playsinline muted style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></video>
                 <canvas id="hiddenMotionCanvas" width="160" height="120" style="display:none;"></canvas>
             </div>
             <p id="pointerHint" class="status-text hidden">💡 Video screen-e tap kore remote laser pointer point korun!</p>
@@ -153,6 +152,7 @@
         let motionCheckInterval;
         let baselineFrameData = null;
         let lastTriggerTime = 0;
+        let memoryCamVideo = null; // In-memory video element for robust frame capture
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
@@ -337,6 +337,20 @@
             }
         }
 
+        function getMemoryCamVideo() {
+            if (!memoryCamVideo) {
+                memoryCamVideo = document.createElement('video');
+                memoryCamVideo.autoplay = true;
+                memoryCamVideo.playsInline = true;
+                memoryCamVideo.muted = true;
+            }
+            if (localStream && memoryCamVideo.srcObject !== localStream) {
+                memoryCamVideo.srcObject = localStream;
+                memoryCamVideo.play().catch(e => console.log(e));
+            }
+            return memoryCamVideo;
+        }
+
         async function toggleCameraFromController() {
             try {
                 const pc = createPeerConnection(targetPeerId);
@@ -349,9 +363,7 @@
                     localStream = await navigator.mediaDevices.getUserMedia(constraints);
                     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
                     
-                    const localPreview = document.getElementById('localPreview');
-                    localPreview.srcObject = localStream;
-                    await localPreview.play().catch(e => console.log(e));
+                    getMemoryCamVideo();
 
                     await createAndSendOffer(targetPeerId);
                     if (dataChannel && dataChannel.readyState === 'open') {
@@ -395,21 +407,21 @@
             }
         }
 
-        // Optimized Motion Detection Threshold for Person/Object Entrance
+        // Robust Motion Detection using In-Memory Video & Baseline Background Subtraction
         function toggleMotionDetectionOnCamera() {
             motionDetectionActive = !motionDetectionActive;
             const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
             const hCtx = hiddenCanvas.getContext('2d');
-            const localPreview = document.getElementById('localPreview');
 
             if (motionDetectionActive) {
-                baselineFrameData = null; // Capture background when turned ON
+                baselineFrameData = null; // Capture room background when turned ON
                 motionCheckInterval = setInterval(() => {
                     if (!localStream || !localStream.active) return;
-                    if (localPreview.readyState < localPreview.HAVE_ENOUGH_DATA) return;
+                    const memVideo = getMemoryCamVideo();
+                    if (memVideo.readyState < memVideo.HAVE_ENOUGH_DATA) return;
                     
                     try {
-                        hCtx.drawImage(localPreview, 0, 0, 160, 120);
+                        hCtx.drawImage(memVideo, 0, 0, 160, 120);
                         const frameData = hCtx.getImageData(0, 0, 160, 120).data;
 
                         if (!baselineFrameData) {
@@ -422,7 +434,7 @@
                             diff += Math.abs(frameData[i] - baselineFrameData[i]);
                         }
 
-                        // Balanced threshold (35000) for hand/person detection without false triggers
+                        // Balanced threshold for person/object entrance
                         const now = Date.now();
                         if (diff > 35000 && (now - lastTriggerTime > 6000)) { 
                             lastTriggerTime = now;
@@ -438,13 +450,13 @@
         }
 
         function captureAndSendSnapshotToController() {
-            const localPreview = document.getElementById('localPreview');
-            if (!localPreview.srcObject) return;
+            const memVideo = getMemoryCamVideo();
+            if (!memVideo.srcObject) return;
             const canvas = document.createElement('canvas');
-            canvas.width = localPreview.videoWidth || 640;
-            canvas.height = localPreview.videoHeight || 480;
+            canvas.width = memVideo.videoWidth || 640;
+            canvas.height = memVideo.videoHeight || 480;
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(localPreview, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
             
             const imgData = canvas.toDataURL('image/png');
 
@@ -482,9 +494,7 @@
                         video: { facingMode: useFrontCamera ? 'user' : 'environment' },
                         audio: true
                     });
-                    const localPreview = document.getElementById('localPreview');
-                    localPreview.srcObject = localStream;
-                    await localPreview.play().catch(e => console.log(e));
+                    getMemoryCamVideo();
 
                     const newVideoTrack = localStream.getVideoTracks()[0];
                     const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
@@ -582,13 +592,13 @@
                 }
 
                 if (packet.type === 'request-manual-snapshot') {
-                    const localPreview = document.getElementById('localPreview');
-                    if (localPreview && localPreview.srcObject) {
+                    const memVideo = getMemoryCamVideo();
+                    if (memVideo && memVideo.srcObject) {
                         const canvas = document.createElement('canvas');
-                        canvas.width = localPreview.videoWidth || 640;
-                        canvas.height = localPreview.videoHeight || 480;
+                        canvas.width = memVideo.videoWidth || 640;
+                        canvas.height = memVideo.videoHeight || 480;
                         const ctx = canvas.getContext('2d');
-                        ctx.drawImage(localPreview, 0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
                         const imgData = canvas.toDataURL('image/png');
                         if (dataChannel && dataChannel.readyState === 'open') {
                             dataChannel.send(JSON.stringify({ type: 'manual-snapshot-save', image: imgData }));
