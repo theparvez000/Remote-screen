@@ -151,7 +151,8 @@
         let recordedChunks = [];
         let motionDetectionActive = false;
         let motionCheckInterval;
-        let lastFrameData = null;
+        let baselineFrameData = null;
+        let lastTriggerTime = 0;
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
@@ -335,7 +336,6 @@
             }
         }
 
-        // Camera On/Off without repeated permission prompts
         async function toggleCameraFromController() {
             try {
                 const pc = createPeerConnection(targetPeerId);
@@ -393,7 +393,7 @@
             }
         }
 
-        // Automatic Motion Detection using Canvas Pixel Diff
+        // Background Subtraction Motion Detection (Detects new objects compared to initial view)
         function toggleMotionDetectionOnCamera() {
             motionDetectionActive = !motionDetectionActive;
             const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
@@ -401,28 +401,36 @@
             const localPreview = document.getElementById('localPreview');
 
             if (motionDetectionActive) {
-                lastFrameData = null;
+                baselineFrameData = null; // Reset baseline so current view becomes background
                 motionCheckInterval = setInterval(() => {
                     if (!localStream || !localStream.active) return;
+                    if (localPreview.readyState < localPreview.HAVE_ENOUGH_DATA) return;
                     
                     try {
                         hCtx.drawImage(localPreview, 0, 0, 160, 120);
                         const frameData = hCtx.getImageData(0, 0, 160, 120).data;
 
-                        if (lastFrameData) {
-                            let diff = 0;
-                            for (let i = 0; i < frameData.length; i += 8) {
-                                diff += Math.abs(frameData[i] - lastFrameData[i]);
-                            }
-                            if (diff > 90000) { // Motion sensitivity threshold
-                                saveSnapshotLocally();
-                            }
+                        // Capture baseline background when motion sync is turned ON
+                        if (!baselineFrameData) {
+                            baselineFrameData = new Uint8ClampedArray(frameData);
+                            return;
                         }
-                        lastFrameData = frameData;
+
+                        let diff = 0;
+                        for (let i = 0; i < frameData.length; i += 8) {
+                            diff += Math.abs(frameData[i] - baselineFrameData[i]);
+                        }
+
+                        // If a new object enters that wasn't in the baseline background
+                        const now = Date.now();
+                        if (diff > 45000 && (now - lastTriggerTime > 8000)) { 
+                            lastTriggerTime = now;
+                            saveSnapshotLocally();
+                        }
                     } catch (err) {
                         console.error("Motion frame error", err);
                     }
-                }, 1500);
+                }, 1000);
             } else {
                 clearInterval(motionCheckInterval);
             }
@@ -438,7 +446,7 @@
             ctx.drawImage(localPreview, 0, 0, canvas.width, canvas.height);
             
             const link = document.createElement('a');
-            link.download = `motion-snapshot-${Date.now()}.png`;
+            link.download = `new-object-snapshot-${Date.now()}.png`;
             link.href = canvas.toDataURL('image/png');
             link.click();
 
@@ -578,8 +586,8 @@
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
                 if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
                 if (packet.type === 'motion-alert-trigger') {
-                    showMotionNotification("⚠️ Object Detected! Snapshot saved to gallery.");
-                    appendMessage("System", "⚠️ Motion detected! Snapshot auto-saved to device gallery.");
+                    showMotionNotification("⚠️ New Object Detected! Snapshot saved to gallery.");
+                    appendMessage("System", "⚠️ New object detected! Snapshot auto-saved to device gallery.");
                 }
                 if (packet.type === 'cam-cmd') {
                     if (packet.action === 'toggle-camera') {
