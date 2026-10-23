@@ -49,14 +49,15 @@
             <!-- Remote Camera Controls for Viewer -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
                 <div class="btn-group">
-                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
+                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Lens Switch</button>
                     <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
                     <button onclick="sendCamCommand('zoom-out')" style="background: #ffc107; color: #000;">🔍 Zoom -</button>
                 </div>
                 <div class="btn-group">
-                    <button onclick="captureSnapshot()" style="background: #28a745;">📸 Capture Photo</button>
-                    <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
+                    <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
+                    <button onclick="captureSnapshot()" style="background: #28a745;">📸 Capture</button>
                 </div>
+                <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
             </div>
 
             <video id="remoteVideo" autoplay playsinline class="hidden"></video>
@@ -81,8 +82,10 @@
         let localStream;
         let targetPeerId;
         let isHost = false;
-        let useFrontCamera = false;
+        let videoDevices = [];
+        let currentDeviceIndex = 0;
         let currentZoom = 1;
+        let torchOn = false;
         let mediaRecorder;
         let recordedChunks = [];
 
@@ -186,49 +189,65 @@
 
         async function toggleCamera() {
             try {
-                if (!targetPeerId) {
-                    return alert('Kono device connect hoyni!');
-                }
+                if (!targetPeerId) return alert('Kono device connect hoyni!');
                 const pc = createPeerConnection(targetPeerId);
 
-                if (!localStream) {
-                    const constraints = {
-                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
-                        audio: true
-                    };
-                    localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                    
-                    await createAndSendOffer(targetPeerId);
-                    document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
-                }
+                // Get all available video input devices (multiple lenses/cameras)
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+                const constraints = {
+                    video: videoDevices.length > 0 ? { deviceId: { exact: videoDevices[currentDeviceIndex].deviceId } } : { facingMode: 'environment' },
+                    audio: true
+                };
+
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                
+                await createAndSendOffer(targetPeerId);
+                document.getElementById('camBtn').innerText = "📷 Camera On Achhe";
             } catch (err) {
                 alert("Camera error: " + err.message);
             }
         }
 
-        function handleCameraCommand(action) {
+        async function handleCameraCommand(action) {
             if (!localStream) return;
             const videoTrack = localStream.getVideoTracks()[0];
             if (!videoTrack) return;
 
             if (action === 'switch') {
-                useFrontCamera = !useFrontCamera;
-                localStream.getTracks().forEach(track => track.stop());
-                navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
-                    audio: true
-                }).then(newStream => {
-                    localStream = newStream;
-                    const newVideoTrack = localStream.getVideoTracks()[0];
-                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                    if (sender) sender.replaceTrack(newVideoTrack);
-                });
+                if (videoDevices.length > 1) {
+                    currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+                    localStream.getTracks().forEach(track => track.stop());
+                    
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({
+                            video: { deviceId: { exact: videoDevices[currentDeviceIndex].deviceId } },
+                            audio: true
+                        });
+                        const newVideoTrack = localStream.getVideoTracks()[0];
+                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) sender.replaceTrack(newVideoTrack);
+                    } catch (e) {
+                        alert("Lens switch error: " + e.message);
+                    }
+                } else {
+                    alert("Onno kono camera lens paoa jayni!");
+                }
             } else if (action === 'zoom-in' || action === 'zoom-out') {
                 const capabilities = videoTrack.getCapabilities();
                 if (capabilities.zoom) {
                     currentZoom = action === 'zoom-in' ? Math.min(currentZoom + 0.5, capabilities.zoom.max) : Math.max(currentZoom - 0.5, capabilities.zoom.min);
                     videoTrack.applyConstraints({ advanced: [{ zoom: currentZoom }] });
+                }
+            } else if (action === 'torch') {
+                const capabilities = videoTrack.getCapabilities();
+                if (capabilities.torch) {
+                    torchOn = !torchOn;
+                    videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+                } else {
+                    alert("Ei device-e flashlight support kore na!");
                 }
             }
         }
@@ -323,7 +342,7 @@
         }
 
         function drawOnCanvas(x, y, isDrawing) {
-            if (!isDrawing) { ctx.beginPath(); return; }
+            if (!isizing_check = !isDrawing) { ctx.beginPath(); return; }
             ctx.lineWidth = 3;
             ctx.lineCap = 'round';
             ctx.strokeStyle = '#007bff';
