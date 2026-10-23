@@ -32,7 +32,6 @@
             transition: opacity 0.3s ease;
         }
 
-        /* Motion Alert Banner */
         .motion-alert-banner {
             position: absolute;
             top: 10px;
@@ -46,7 +45,7 @@
             font-weight: bold;
             z-index: 30;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            animation: fadeInOut 3s forwards;
+            animation: fadeInOut 3.5s forwards;
         }
 
         @keyframes fadeInOut {
@@ -108,6 +107,7 @@
                 <div class="btn-group">
                     <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
                     <button onclick="sendCamCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
+                    <button onclick="captureAndEmailSnapshot()" style="background: #17a2b8;">📧 Email Snapshot</button>
                 </div>
                 <button id="motionBtn" onclick="sendCamCommand('toggle-motion')" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
                 <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
@@ -118,7 +118,8 @@
                 <div id="videoOverlay" class="video-overlay">Waiting for Controller...</div>
                 <div id="laserDot" class="laser-pointer hidden"></div>
                 <div id="motionAlertContainer"></div>
-                <video id="remoteVideo" autoplay playsinline></video>
+                <video id="remoteVideo" autoplay playsinline muted></video>
+                <canvas id="hiddenMotionCanvas" width="160" height="120" style="display:none;"></canvas>
             </div>
             <p id="pointerHint" class="status-text hidden">💡 Video screen-e tap kore remote laser pointer point korun!</p>
             
@@ -252,7 +253,7 @@
             container.appendChild(banner);
             setTimeout(() => {
                 banner.remove();
-            }, 3000);
+            }, 3500);
         }
 
         function createPeerConnection(targetId) {
@@ -387,67 +388,47 @@
             }
         }
 
-        // Camera side motion detection runner
+        // Camera side motion detection runner using HTML5 Canvas pixel analysis
         function toggleMotionDetectionOnCamera() {
             motionDetectionActive = !motionDetectionActive;
-            const camVideo = document.getElementById('remoteVideo'); // on camera side, localStream is played or analyzed via hidden canvas
+            const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
+            const hCtx = hiddenCanvas.getContext('2d');
+            const videoElem = document.getElementById('remoteVideo');
 
             if (motionDetectionActive) {
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify({ type: 'motion-status', active: true }));
-                }
-                const tempCanvas = document.createElement('canvas');
-                const tCtx = tempCanvas.getContext('2d');
-
+                lastFrameData = null;
                 motionCheckInterval = setInterval(async () => {
                     if (!localStream || !localStream.active) return;
-                    const track = localStream.getVideoTracks()[0];
-                    if (!track) return;
-
-                    // Capture frame from local stream
-                    const imageCapture = new ImageCapture(track);
+                    
+                    // Render video element or localStream to hidden canvas
                     try {
-                        const bitmap = await imageCapture.grabFrame();
-                        tempCanvas.width = 160;
-                        tempCanvas.height = 120;
-                        tCtx.drawImage(bitmap, 0, 0, 160, 120);
-                        const frameData = tCtx.getImageData(0, 0, 160, 120).data;
+                        hCtx.drawImage(videoElem, 0, 0, 160, 120);
+                        const frameData = hCtx.getImageData(0, 0, 160, 120).data;
 
                         if (lastFrameData) {
                             let diff = 0;
-                            for (let i = 0; i < frameData.length; i += 16) { // sample every 4th pixel
+                            for (let i = 0; i < frameData.length; i += 8) { // check every 2nd pixel
                                 diff += Math.abs(frameData[i] - lastFrameData[i]);
                             }
-                            if (diff > 500000) { // Motion threshold
-                                // Motion detected! Capture snapshot and email
+                            // Threshold for object/hand movement
+                            if (diff > 120000) { 
                                 triggerAutoSnapshotEmail();
                             }
                         }
                         lastFrameData = frameData;
                     } catch (err) {
-                        // fallback if ImageCapture not fully supported
+                        console.error("Motion frame error", err);
                     }
-                }, 4000);
+                }, 2000); // Check every 2 seconds
             } else {
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify({ type: 'motion-status', active: false }));
-                }
                 clearInterval(motionCheckInterval);
             }
         }
 
         async function triggerAutoSnapshotEmail() {
             try {
-                const tempCanvas = document.createElement('canvas');
-                const tCtx = tempCanvas.getContext('2d');
-                const videoTracks = localStream.getVideoTracks();
-                if (!videoTracks.length) return;
-                const imageCapture = new ImageCapture(videoTracks[0]);
-                const bitmap = await imageCapture.grabFrame();
-                tempCanvas.width = bitmap.width || 640;
-                tempCanvas.height = bitmap.height || 480;
-                tCtx.drawImage(bitmap, 0, 0, tempCanvas.width, tempCanvas.height);
-                const imgData = tempCanvas.toDataURL('image/png');
+                const imgData = getSnapshotBase64();
+                if (!imgData) return;
 
                 const res = await fetch('/send-snapshot', {
                     method: 'POST',
@@ -463,6 +444,38 @@
             }
         }
 
+        function getSnapshotBase64() {
+            const video = document.getElementById('remoteVideo');
+            if (!video.srcObject && !video.videoWidth) return null;
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/png');
+        }
+
+        async function captureAndEmailSnapshot() {
+            const imgData = getSnapshotBase64();
+            if (!imgData) return;
+
+            showMotionNotification("📤 Sending snapshot to Gmail...");
+            try {
+                const res = await fetch('/send-snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imgData, recipient: 'theparvez000@gmail.com' })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showMotionNotification("✅ Snapshot sent to theparvez000@gmail.com!");
+                    appendMessage("System", "📧 Manual snapshot sent to Gmail!");
+                }
+            } catch (e) {
+                console.error("Manual Email error", e);
+            }
+        }
+
         async function handleCameraCommand(action) {
             if (action === 'toggle-camera') {
                 if (dataChannel && dataChannel.readyState === 'open') {
@@ -470,7 +483,6 @@
                 }
                 return;
             } else if (action === 'toggle-motion') {
-                // Executed on camera phone side when command received
                 toggleMotionDetectionOnCamera();
                 return;
             }
@@ -520,7 +532,6 @@
 
         function sendCamCommand(action) {
             if (action === 'toggle-motion') {
-                // Toggle button UI state on controller side immediately
                 const btn = document.getElementById('motionBtn');
                 motionDetectionActive = !motionDetectionActive;
                 if (motionDetectionActive) {
