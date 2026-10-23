@@ -23,6 +23,8 @@
         .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
         .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .status-text { font-size: 14px; color: #aaa; margin-top: 5px; }
+        .qr-box { background: #fff; padding: 10px; display: inline-block; border-radius: 8px; margin-top: 10px; }
+        .qr-box img { display: block; width: 180px; height: 180px; }
     </style>
 </head>
 <body>
@@ -32,28 +34,31 @@
     <!-- Connection Setup -->
     <div id="setup-card" class="card">
         <h3>Connection Mode Select Korun</h3>
-        <button onclick="startHost()">1. Ei phone Host (Camera Source)</button>
+        <button onclick="startController()" style="background: #28a745;">1. Controller Phone (Generate Code & QR)</button>
         <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinRoom()">2. Second phone theke Join korun</button>
+        <button onclick="joinAsCamera()">2. Camera Phone (Manual Join)</button>
         <div id="statusMsg" class="status-text"></div>
     </div>
 
-    <!-- Host Display Code -->
-    <div id="host-card" class="card hidden">
-        <h3>Aponar connection pin:</h3>
+    <!-- Controller Display Code & QR -->
+    <div id="controller-card" class="card hidden">
+        <h3>Aponar Connection PIN:</h3>
         <div class="code-display" id="generatedCode">------</div>
-        <p>Second phone-e ei pin diye connect korun.</p>
-        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for viewer...</div>
+        <p>Camera phone diye nicher QR Code-ti scan korun:</p>
+        <div class="qr-box">
+            <img id="qrImage" src="" alt="QR Code">
+        </div>
+        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phone to scan/connect...</div>
     </div>
 
     <!-- Connected Workspace -->
     <div id="workspace" class="hidden">
         <div class="card">
             <h3>🎥 Live Camera & Remote Control</h3>
-            <button id="camBtn" onclick="toggleCamera()">📷 Camera On Korun (Host)</button>
+            <button id="camBtn" onclick="toggleCamera()" class="hidden">📷 Camera On Korun (Camera Phone)</button>
             
-            <!-- Remote Camera Controls for Viewer -->
+            <!-- Remote Camera Controls for Controller Phone -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
                 <div class="btn-group">
                     <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
@@ -92,7 +97,7 @@
         let dataChannel;
         let localStream;
         let targetPeerId;
-        let isHost = false;
+        let isController = false;
         let useFrontCamera = false;
         let currentZoom = 1;
         let torchOn = false;
@@ -101,21 +106,37 @@
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
-        function startHost() {
-            isHost = true;
+        // Auto check if URL has room code (when scanned via QR)
+        window.onload = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomParam = urlParams.get('room');
+            if (roomParam) {
+                document.getElementById('joinCode').value = roomParam;
+                // Automatically join as camera source phone
+                setTimeout(() => {
+                    joinAsCamera();
+                }, 500);
+            }
+        };
+
+        function startController() {
+            isController = true;
             document.getElementById('setup-card').classList.add('hidden');
-            document.getElementById('host-card').classList.remove('hidden');
+            document.getElementById('controller-card').classList.remove('hidden');
             socket.emit('create-room');
         }
 
         socket.on('room-created', ({ roomCode }) => {
             document.getElementById('generatedCode').innerText = roomCode;
+            const joinUrl = `${window.location.origin}/?room=${roomCode}`;
+            const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(joinUrl)}`;
+            document.getElementById('qrImage').src = qrApiUrl;
         });
 
-        function joinRoom() {
+        function joinAsCamera() {
             const code = document.getElementById('joinCode').value;
             if (!code) {
-                document.getElementById('statusMsg').innerText = "Pin code din!";
+                document.getElementById('statusMsg').innerText = "Pin code din ba QR scan korun!";
                 return;
             }
             socket.emit('join-room', { roomCode: code });
@@ -123,28 +144,31 @@
 
         socket.on('room-joined', ({ hostId }) => {
             targetPeerId = hostId;
-            initWorkspace();
+            initWorkspace(false);
             setupPeerConnection(hostId, false);
         });
 
         socket.on('viewer-joined', ({ viewerId }) => {
             targetPeerId = viewerId;
-            document.getElementById('connectionStatus').innerText = "Viewer connected successfully!";
-            initWorkspace();
+            document.getElementById('connectionStatus').innerText = "Camera phone connected successfully!";
+            initWorkspace(true);
             setupPeerConnection(viewerId, true);
         });
 
-        function initWorkspace() {
+        function initWorkspace(isUserControlling) {
             document.getElementById('setup-card').classList.add('hidden');
-            document.getElementById('host-card').classList.add('hidden');
+            document.getElementById('controller-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
             
             document.getElementById('videoWrapper').classList.remove('hidden');
             document.getElementById('videoOverlay').innerText = "Waiting for camera...";
 
-            if (!isHost) {
-                document.getElementById('camBtn').style.display = 'none';
+            if (isUserControlling) {
+                // This is the Controller Phone
                 document.getElementById('remoteControls').classList.remove('hidden');
+            } else {
+                // This is the Camera Phone
+                document.getElementById('camBtn').classList.remove('hidden');
             }
             initCanvas();
         }
@@ -213,12 +237,12 @@
         });
 
         socket.on('peer-disconnected', () => {
-            handleHostLeft();
+            handlePeerLeft();
         });
 
-        function handleHostLeft() {
+        function handlePeerLeft() {
             const overlay = document.getElementById('videoOverlay');
-            overlay.innerText = "Host Left";
+            overlay.innerText = "Device Disconnected";
             overlay.classList.remove('hidden');
             const videoElem = document.getElementById('remoteVideo');
             if (videoElem.srcObject) {
