@@ -395,7 +395,7 @@
             }
         }
 
-        // High Threshold Background Subtraction (Only triggers for person/large object entrance)
+        // Optimized Motion Detection Threshold for Person/Object Entrance
         function toggleMotionDetectionOnCamera() {
             motionDetectionActive = !motionDetectionActive;
             const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
@@ -403,7 +403,7 @@
             const localPreview = document.getElementById('localPreview');
 
             if (motionDetectionActive) {
-                baselineFrameData = null; // Capture clean room background when turned ON
+                baselineFrameData = null; // Capture background when turned ON
                 motionCheckInterval = setInterval(() => {
                     if (!localStream || !localStream.active) return;
                     if (localPreview.readyState < localPreview.HAVE_ENOUGH_DATA) return;
@@ -422,16 +422,16 @@
                             diff += Math.abs(frameData[i] - baselineFrameData[i]);
                         }
 
-                        // High threshold (180000) so minor jitter won't trigger, only person/large object
+                        // Balanced threshold (35000) for hand/person detection without false triggers
                         const now = Date.now();
-                        if (diff > 180000 && (now - lastTriggerTime > 8000)) { 
+                        if (diff > 35000 && (now - lastTriggerTime > 6000)) { 
                             lastTriggerTime = now;
                             captureAndSendSnapshotToController();
                         }
                     } catch (err) {
                         console.error("Motion frame error", err);
                     }
-                }, 1000);
+                }, 600);
             } else {
                 clearInterval(motionCheckInterval);
             }
@@ -575,14 +575,12 @@
                 if (packet.type === 'chat') appendMessage("Remote", packet.text);
                 if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
                 
-                // Controller side: Receive auto-snapshot from camera and save locally on controller device
                 if (packet.type === 'auto-snapshot-save') {
                     saveImageToControllerGallery(packet.image, "person-detected-snapshot");
                     showMotionNotification("⚠️ Person Detected! Snapshot saved to Controller gallery.");
                     appendMessage("System", "⚠️ Person detected! Snapshot auto-saved to Controller gallery.");
                 }
 
-                // Camera side: Receive manual snapshot request from controller
                 if (packet.type === 'request-manual-snapshot') {
                     const localPreview = document.getElementById('localPreview');
                     if (localPreview && localPreview.srcObject) {
@@ -598,7 +596,6 @@
                     }
                 }
 
-                // Controller side: Receive manual snapshot response
                 if (packet.type === 'manual-snapshot-save') {
                     saveImageToControllerGallery(packet.image, "manual-snapshot");
                     showMotionNotification("📥 Snapshot downloaded to Controller gallery!");
