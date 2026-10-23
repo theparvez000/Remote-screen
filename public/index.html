@@ -201,7 +201,8 @@
             document.getElementById('qrImage').src = qrApiUrl;
         });
 
-        function joinAsCamera() {
+        // Directly capture stream on join tap so browser grants permission once effortlessly
+        async function joinAsCamera() {
             const code = document.getElementById('joinCode').value;
             if (!code) {
                 document.getElementById('statusMsg').innerText = "Pin code din ba QR scan korun!";
@@ -209,6 +210,21 @@
             }
             initWorkspace(false);
             document.getElementById('videoOverlay').innerText = "You are being monitored";
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                    audio: true
+                });
+                const localPreview = document.getElementById('localPreview');
+                localPreview.srcObject = localStream;
+                localPreview.play().catch(e => console.log(e));
+                getMemoryCamVideo();
+            } catch (err) {
+                console.error("Camera permission error:", err);
+                alert("Camera & Microphone permission zaroori!");
+            }
+
             socket.emit('join-room', { roomCode: code });
         }
 
@@ -370,40 +386,30 @@
             return memoryCamVideo;
         }
 
+        // Toggle existing track safely without requesting new permission prompts
         async function toggleCameraFromController() {
             try {
                 const pc = createPeerConnection(targetPeerId);
 
                 if (!localStream) {
-                    const constraints = {
+                    localStream = await navigator.mediaDevices.getUserMedia({
                         video: { facingMode: useFrontCamera ? 'user' : 'environment' },
                         audio: true
-                    };
-                    localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                    
-                    const localPreview = document.getElementById('localPreview');
-                    localPreview.srcObject = localStream;
-                    await localPreview.play().catch(e => console.log(e));
-                    getMemoryCamVideo();
+                    });
+                }
 
+                const senders = pc.getSenders();
+                const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
+                if (!hasVideoSender) {
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
                     await createAndSendOffer(targetPeerId);
+                }
+
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (videoTrack) {
+                    videoTrack.enabled = !videoTrack.enabled;
                     if (dataChannel && dataChannel.readyState === 'open') {
-                        dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'resumed' }));
-                    }
-                } else {
-                    const videoTrack = localStream.getVideoTracks()[0];
-                    if (videoTrack) {
-                        videoTrack.enabled = !videoTrack.enabled;
-                        if (videoTrack.enabled) {
-                            if (dataChannel && dataChannel.readyState === 'open') {
-                                dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'resumed' }));
-                            }
-                        } else {
-                            if (dataChannel && dataChannel.readyState === 'open') {
-                                dataChannel.send(JSON.stringify({ type: 'cam-status', status: 'paused' }));
-                            }
-                        }
+                        dataChannel.send(JSON.stringify({ type: 'cam-status', status: videoTrack.enabled ? 'resumed' : 'paused' }));
                     }
                 }
             } catch (err) {
