@@ -113,9 +113,11 @@
             const roomParam = urlParams.get('room');
             if (roomParam) {
                 document.getElementById('joinCode').value = roomParam;
+                // Clean URL so refresh doesn't keep looping room param
+                window.history.replaceState({}, document.title, window.location.pathname);
                 setTimeout(() => {
                     joinAsCamera();
-                }, 500);
+                }, 400);
             }
         };
 
@@ -139,12 +141,14 @@
                 document.getElementById('statusMsg').innerText = "Pin code din ba QR scan korun!";
                 return;
             }
+            // Immediately hide setup and show workspace so user is never stuck
+            initWorkspace(false);
+            document.getElementById('videoOverlay').innerText = "Connecting to Controller...";
             socket.emit('join-room', { roomCode: code });
         }
 
         socket.on('room-joined', ({ hostId }) => {
             targetPeerId = hostId;
-            initWorkspace(false);
             setupPeerConnection(hostId, false);
         });
 
@@ -167,7 +171,7 @@
                 document.getElementById('videoOverlay').innerText = "Click 'Camera On/Off' to start stream";
             } else {
                 document.getElementById('cameraStatusMsg').classList.remove('hidden');
-                document.getElementById('videoOverlay').innerText = "Waiting for Controller...";
+                document.getElementById('videoOverlay').innerText = "Connected! Waiting for Controller...";
             }
             initCanvas();
         }
@@ -250,7 +254,6 @@
             }
         }
 
-        // Camera phone triggers camera start/pause based on Controller command
         async function toggleCameraFromController() {
             try {
                 const pc = createPeerConnection(targetPeerId);
@@ -289,7 +292,6 @@
 
         async function handleCameraCommand(action) {
             if (action === 'toggle-camera') {
-                // If controller clicked toggle, send command to camera phone
                 if (dataChannel && dataChannel.readyState === 'open') {
                     dataChannel.send(JSON.stringify({ type: 'cam-cmd', action: 'toggle-camera' }));
                 }
@@ -474,6 +476,7 @@
 
         function sendMessage() {
             const input = document.getElementById('chatInput');
+            print = input.value.trim();
             const text = input.value.trim();
             if (!text) return;
 
