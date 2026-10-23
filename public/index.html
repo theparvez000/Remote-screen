@@ -18,7 +18,6 @@
         #remoteVideo { width: 100%; display: block; background: #000; }
         .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; font-size: 20px; font-weight: bold; color: #ffc107; z-index: 10; pointer-events: none; }
         
-        /* Laser Pointer Effect */
         .laser-pointer {
             position: absolute;
             width: 24px;
@@ -85,8 +84,9 @@
                 <div class="btn-group">
                     <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
                     <button onclick="sendCamCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
-                    <button onclick="captureSnapshot()" style="background: #28a745;">📸 Capture</button>
+                    <button onclick="captureAndEmailSnapshot()" style="background: #28a745;">📧 Email Snapshot</button>
                 </div>
+                <button id="motionBtn" onclick="toggleMotionDetection()" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
                 <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
             </div>
 
@@ -123,7 +123,9 @@
         let torchOn = false;
         let mediaRecorder;
         let recordedChunks = [];
-        let audioCtx;
+        let motionDetectionActive = false;
+        let motionInterval;
+        let lastFrameData = null;
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
@@ -193,7 +195,6 @@
             initCanvas();
         }
 
-        // Pointer Click Handler
         function handleVideoClick(e) {
             if (!isController) return;
             const container = document.getElementById('videoWrapper');
@@ -408,18 +409,63 @@
             }
         }
 
-        function captureSnapshot() {
+        function getSnapshotBase64() {
             const video = document.getElementById('remoteVideo');
-            if (!video.srcObject) return;
+            if (!video.srcObject) return null;
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const link = document.createElement('a');
-            link.download = 'snapshot.png';
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            return canvas.toDataURL('image/png');
+        }
+
+        async function captureAndEmailSnapshot() {
+            const imgData = getSnapshotBase64();
+            if (!imgData) return;
+
+            try {
+                const res = await fetch('/send-snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imgData, recipient: 'theparvez000@gmail.com' })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    appendMessage("System", "📩 Snapshot sent to theparvez000@gmail.com!");
+                }
+            } catch (e) {
+                console.error("Email send error", e);
+            }
+        }
+
+        function toggleMotionDetection() {
+            motionDetectionActive = !motionDetectionActive;
+            const btn = document.getElementById('motionBtn');
+
+            if (motionDetectionActive) {
+                btn.innerText = "📸 Motion Snapshot Sync: ON";
+                btn.style.background = "#28a745";
+                
+                motionInterval = setInterval(() => {
+                    detectMotionAndSend();
+                }, 3000); // Check every 3 seconds
+            } else {
+                btn.innerText = "📸 Motion Snapshot Sync: OFF";
+                btn.style.background = "#fd7e14";
+                clearInterval(motionInterval);
+            }
+        }
+
+        function detectMotionAndSend() {
+            const imgData = getSnapshotBase64();
+            if (!imgData) return;
+
+            if (lastFrameData && imgData !== lastFrameData) {
+                // Send snapshot via email when motion detected
+                captureAndEmailSnapshot();
+            }
+            lastFrameData = imgData;
         }
 
         function toggleRecording() {
