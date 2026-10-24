@@ -336,215 +336,399 @@
                 videoElem.srcObject = null;
             }
         }
-    <script>
-        const socket = io();
-        let peerConnection;
-        let dataChannel;
-        let localStream;
-        let targetPeerId;
-        let isController = false;
-        let useFrontCamera = false;
-        let currentZoom = 1;
-        let torchOn = false;
-        let mediaRecorder;
-        let recordedChunks = [];
-        let motionDetectionActive = false;
-        let motionCheckInterval;
-        let baselineFrameData = null;
-        let lastTriggerTime = 0;
-        let memoryCamVideo = null;
-        let stealthActive = false;
-
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
-
-        window.onload = () => {
-            const urlParams = new URLSearchParams(window.location.search);
-            const roomParam = urlParams.get('room');
-            if (roomParam) {
-                document.getElementById('joinCode').value = roomParam;
-                window.history.replaceState({}, document.title, window.location.pathname);
-                setTimeout(() => { joinAsCamera(); }, 400);
+        function getMemoryCamVideo() {
+            if (!memoryCamVideo) {
+                memoryCamVideo = document.createElement('video');
+                memoryCamVideo.autoplay = true;
+                memoryCamVideo.playsInline = true;
+                memoryCamVideo.muted = true;
             }
-        };
-
-        function startController() {
-            isController = true;
-            document.getElementById('setup-card').classList.add('hidden');
-            document.getElementById('controller-card').classList.remove('hidden');
-            socket.emit('create-room');
+            if (localStream && memoryCamVideo.srcObject !== localStream) {
+                memoryCamVideo.srcObject = localStream;
+                memoryCamVideo.play().catch(e => console.log(e));
+            }
+            return memoryCamVideo;
         }
 
-        socket.on('room-created', ({ roomCode }) => {
-            document.getElementById('generatedCode').innerText = roomCode;
-            const joinUrl = `${window.location.origin}/?room=${roomCode}`;
-            const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(joinUrl)}`;
-            document.getElementById('qrImage').src = qrApiUrl;
-        });
+        async function toggleCameraFromController() {
+            try {
+                const pc = createPeerConnection(targetPeerId);
 
-        async function joinAsCamera() {
-            const code = document.getElementById('joinCode').value;
-            if (!code) {
-                document.getElementById('statusMsg').innerText = "Pin code din ba QR scan korun!";
+                if (!localStream) {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                        audio: true
+                    });
+                }
+
+                const senders = pc.getSenders();
+                const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
+                if (!hasVideoSender) {
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                    await createAndSendOffer(targetPeerId);
+                }
+
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (videoTrack) {
+                    videoTrack.enabled = !videoTrack.enabled;
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send(JSON.stringify({ type: 'cam-status', status: videoTrack.enabled ? 'resumed' : 'paused' }));
+                    }
+                }
+            } catch (err) {
+                console.error("Camera error:", err);
+            }
+        }
+
+        function playSiren() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(800, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 1.5);
+            } catch (e) { console.error("Audio error", e); }
+        }
+
+        function speakWarningVoice() {
+            try {
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance("Don't close your browser");
+                    utterance.rate = 1.0;
+                    utterance.pitch = 1.0;
+                    window.speechSynthesis.speak(utterance);
+                }
+            } catch (e) { console.error("Speech error", e); }
+        }
+
+        function toggleMotionDetectionOnCamera() {
+            motionDetectionActive = !motionDetectionActive;
+            const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
+            const hCtx = hiddenCanvas.getContext('2d');
+
+            if (motionDetectionActive) {
+                baselineFrameData = null;
+                motionCheckInterval = setInterval(() => {
+                    if (!localStream || !localStream.active) return;
+                    const memVideo = getMemoryCamVideo();
+                    if (memVideo.readyState < memVideo.HAVE_ENOUGH_DATA) return;
+                    
+                    try {
+                        hCtx.drawImage(memVideo, 0, 0, 160, 120);
+                        const frameData = hCtx.getImageData(0, 0, 160, 120).data;
+
+                        if (!baselineFrameData) {
+                            baselineFrameData = new Uint8ClampedArray(frameData);
+                            return;
+                        }
+
+                        let diff = 0;
+                        for (let i = 0; i < frameData.length; i += 8) {
+                            diff += Math.abs(frameData[i] - baselineFrameData[i]);
+                        }
+
+                        const now = Date.now();
+                        if (diff > 35000 && (now - lastTriggerTime > 6000)) { 
+                            lastTriggerTime = now;
+                            captureAndSendSnapshotToController();
+                        }
+                    } catch (err) { console.error("Motion frame error", err); }
+                }, 600);
+            } else {
+                clearInterval(motionCheckInterval);
+            }
+        }
+
+        function captureAndSendSnapshotToController() {
+            const memVideo = getMemoryCamVideo();
+            if (!memVideo.srcObject) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = memVideo.videoWidth || 640;
+            canvas.height = memVideo.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
+            
+            const imgData = canvas.toDataURL('image/png');
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'auto-snapshot-save', image: imgData }));
+            }
+        }
+
+        function captureAndSaveSnapshot() {
+            const video = document.getElementById('remoteVideo');
+            if (!video.srcObject) {
+                showMotionNotification("⚠️ Camera stream active nei!");
                 return;
             }
-            initWorkspace(false);
-            document.getElementById('videoOverlay').innerText = "You are being monitored";
-
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: useFrontCamera ? 'user' : 'environment' },
-                    audio: true
-                });
-                const localPreview = document.getElementById('localPreview');
-                localPreview.srcObject = localStream;
-                localPreview.play().catch(e => console.log(e));
-                getMemoryCamVideo();
-            } catch (err) {
-                console.error("Camera permission error:", err);
-                alert("Camera & Microphone permission zaroori!");
-            }
-
-            socket.emit('join-room', { roomCode: code });
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const link = document.createElement('a');
+            link.download = `snapshot-${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            showMotionNotification("📥 Snapshot saved to gallery!");
         }
 
-        socket.on('room-joined', ({ hostId }) => {
-            targetPeerId = hostId;
-            document.getElementById('videoOverlay').innerText = "You are being monitored";
-            setupPeerConnection(hostId, false);
-        });
-
-        socket.on('viewer-joined', ({ viewerId }) => {
-            targetPeerId = viewerId;
-            document.getElementById('connectionStatus').innerText = "Camera phone connected successfully!";
-            initWorkspace(true);
-            setupPeerConnection(viewerId, true);
-        });
-
-        function initWorkspace(isUserControlling) {
-            document.getElementById('setup-card').classList.add('hidden');
-            document.getElementById('controller-card').classList.add('hidden');
-            document.getElementById('workspace').classList.remove('hidden');
-            document.getElementById('videoWrapper').classList.remove('hidden');
-
-            if (isUserControlling) {
-                document.getElementById('remoteControls').classList.remove('hidden');
-                document.getElementById('pointerHint').classList.remove('hidden');
-                document.getElementById('videoOverlay').innerText = "Click 'Camera On/Off' to start stream";
-            } else {
-                document.getElementById('cameraStatusMsg').classList.remove('hidden');
-                document.getElementById('videoOverlay').innerText = "You are being monitored";
-            }
-            initCanvas();
-        }
-
-        function handleVideoClick(e) {
-            if (!isController) return;
-            const container = document.getElementById('videoWrapper');
-            const rect = container.getBoundingClientRect();
-            const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-            const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-            showPointer(xPercent, yPercent);
+        function toggleStealthScreen() {
+            stealthActive = !stealthActive;
             if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'laser-pointer', xPercent, yPercent }));
+                dataChannel.send(JSON.stringify({ type: 'stealth-mode', active: stealthActive }));
             }
-        }
-
-        function showPointer(xPercent, yPercent) {
-            const laserDot = document.getElementById('laserDot');
-            laserDot.style.left = xPercent + '%';
-            laserDot.style.top = yPercent + '%';
-            laserDot.classList.remove('hidden');
-
-            clearTimeout(window.laserTimer);
-            window.laserTimer = setTimeout(() => {
-                laserDot.classList.add('hidden');
-            }, 2500);
-        }
-
-        function showMotionNotification(msg) {
-            const container = document.getElementById('motionAlertContainer');
-            const banner = document.createElement('div');
-            banner.className = 'motion-alert-banner';
-            banner.innerText = msg;
-            container.appendChild(banner);
-            setTimeout(() => { banner.remove(); }, 3500);
-        }
-
-        function createPeerConnection(targetId) {
-            if (peerConnection) return peerConnection;
-            peerConnection = new RTCPeerConnection(configuration);
-
-            peerConnection.onicecandidate = (e) => {
-                if (e.candidate) socket.emit('signal', { to: targetId, signal: { candidate: e.candidate } });
-            };
-
-            peerConnection.ontrack = (e) => {
-                const videoElem = document.getElementById('remoteVideo');
-                videoElem.srcObject = e.streams[0];
-                document.getElementById('videoOverlay').classList.add('hidden');
-
-                e.streams[0].getVideoTracks()[0].onmute = () => {
-                    document.getElementById('videoOverlay').innerText = "Camera Paused";
-                    document.getElementById('videoOverlay').classList.remove('hidden');
-                };
-                e.streams[0].getVideoTracks()[0].onunmute = () => {
-                    document.getElementById('videoOverlay').classList.add('hidden');
-                };
-            };
-
-            return peerConnection;
-        }
-
-        function setupPeerConnection(targetId, isInitiator) {
-            const pc = createPeerConnection(targetId);
-
-            if (isInitiator) {
-                dataChannel = pc.createDataChannel("hubData");
-                bindDataChannelEvents();
-                createAndSendOffer(targetId);
+            const btn = document.getElementById('stealthBtn');
+            if (stealthActive) {
+                btn.innerText = "🕶️ Stealth: ON";
+                btn.style.background = "#dc3545";
             } else {
-                pc.ondatachannel = (e) => {
-                    dataChannel = e.channel;
-                    bindDataChannelEvents();
-                };
+                btn.innerText = "🕶️ Stealth Screen";
+                btn.style.background = "#6f42c1";
             }
         }
 
-        async function createAndSendOffer(targetId) {
-            const pc = createPeerConnection(targetId);
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('signal', { to: targetId, signal: { sdp: offer } });
-        }
-
-        socket.on('signal', async ({ from, signal }) => {
-            targetPeerId = from;
-            const pc = createPeerConnection(from);
-
-            if (signal.sdp) {
-                await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                if (signal.sdp.type === 'offer') {
-                    const answer = await pc.createAnswer();
-                    await pc.setLocalDescription(answer);
-                    socket.emit('signal', { to: from, signal: { sdp: answer } });
+        async function handleCameraCommand(action) {
+            if (action === 'toggle-camera') {
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'cam-cmd', action: 'toggle-camera' }));
                 }
-            } else if (signal.candidate) {
-                await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                return;
+            } else if (action === 'toggle-motion') {
+                toggleMotionDetectionOnCamera();
+                return;
+            } else if (action === 'alarm') {
+                playSiren();
+                return;
+            } else if (action === 'speak-warning') {
+                speakWarningVoice();
+                return;
             }
-        });
 
-        socket.on('peer-disconnected', () => {
-            handlePeerLeft();
-        });
+            if (!peerConnection) return;
 
-        function handlePeerLeft() {
-            const overlay = document.getElementById('videoOverlay');
-            overlay.innerText = "Device Disconnected";
-            overlay.classList.remove('hidden');
-            const videoElem = document.getElementById('remoteVideo');
-            if (videoElem.srcObject) {
-                videoElem.srcObject.getTracks().forEach(t => t.stop());
-                videoElem.srcObject = null;
+            if (action === 'switch') {
+                useFrontCamera = !useFrontCamera;
+                try {
+                    if (localStream) {
+                        localStream.getTracks().forEach(track => track.stop());
+                    }
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                        audio: true
+                    });
+                    const localPreview = document.getElementById('localPreview');
+                    localPreview.srcObject = localStream;
+                    await localPreview.play().catch(e => console.log(e));
+                    getMemoryCamVideo();
+
+                    const newVideoTrack = localStream.getVideoTracks()[0];
+                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (sender) {
+                        await sender.replaceTrack(newVideoTrack);
+                    }
+                } catch (e) { console.error("Switch error:", e); }
+            } else if (action === 'zoom-in' || action === 'zoom-out') {
+                if (!localStream) return;
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (!videoTrack) return;
+                const capabilities = videoTrack.getCapabilities();
+                if (capabilities.zoom) {
+                    currentZoom = action === 'zoom-in' ? Math.min(currentZoom + 0.5, capabilities.zoom.max) : Math.max(currentZoom - 0.5, capabilities.zoom.min);
+                    videoTrack.applyConstraints({ advanced: [{ zoom: currentZoom }] });
+                }
+            } else if (action === 'torch') {
+                if (!localStream) return;
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (!videoTrack) return;
+                const capabilities = videoTrack.getCapabilities();
+                if (capabilities.torch) {
+                    torchOn = !torchOn;
+                    videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+                }
             }
         }
+
+        function sendCamCommand(action) {
+            if (action === 'toggle-motion') {
+                const btn = document.getElementById('motionBtn');
+                motionDetectionActive = !motionDetectionActive;
+                if (motionDetectionActive) {
+                    btn.innerText = "📸 Motion Snapshot Sync: ON";
+                    btn.style.background = "#28a745";
+                } else {
+                    btn.innerText = "📸 Motion Snapshot Sync: OFF";
+                    btn.style.background = "#fd7e14";
+                }
+            }
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'cam-cmd', action }));
+            }
+        }
+
+        function toggleRecording() {
+            const video = document.getElementById('remoteVideo');
+            const btn = document.getElementById('recBtn');
+            if (!video.srcObject) return;
+
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                recordedChunks = [];
+                mediaRecorder = new MediaRecorder(video.srcObject);
+                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'recorded-stream.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                };
+                mediaRecorder.start();
+                btn.innerText = "⏹️ Stop Record";
+                btn.style.background = "#ffc107";
+                btn.style.color = "#000";
+            } else {
+                mediaRecorder.stop();
+                btn.innerText = "⏺️ Record Video";
+                btn.style.background = "#dc3545";
+                btn.style.color = "#fff";
+            }
+        }
+
+        function bindDataChannelEvents() {
+            if (!dataChannel) return;
+            dataChannel.onmessage = (e) => {
+                const packet = JSON.parse(e.data);
+                if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
+                if (packet.type === 'clear') clearCanvasLocal();
+                if (packet.type === 'chat') appendMessage("Remote", packet.text);
+                if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
+                
+                if (packet.type === 'auto-snapshot-save') {
+                    saveImageToControllerGallery(packet.image, "person-detected-snapshot");
+                    showMotionNotification("⚠️ Person Detected! Snapshot saved to gallery.");
+                    appendMessage("System", "⚠️ Person detected! Snapshot auto-saved to gallery.");
+                }
+
+                if (packet.type === 'stealth-mode') {
+                    const stealthOverlay = document.getElementById('stealthOverlay');
+                    if (packet.active) {
+                        stealthOverlay.classList.remove('hidden');
+                    } else {
+                        stealthOverlay.classList.add('hidden');
+                    }
+                }
+
+                if (packet.type === 'cam-cmd') {
+                    if (packet.action === 'toggle-camera') {
+                        toggleCameraFromController();
+                    } else {
+                        handleCameraCommand(packet.action);
+                    }
+                }
+                if (packet.type === 'cam-status') {
+                    const overlay = document.getElementById('videoOverlay');
+                    if (packet.status === 'paused') {
+                        overlay.innerText = "Camera Paused by Controller";
+                        overlay.classList.remove('hidden');
+                    } else {
+                        overlay.classList.add('hidden');
+                    }
+                }
+            };
+        }
+
+        function saveImageToControllerGallery(base64Data, filenamePrefix) {
+            const link = document.createElement('a');
+            link.download = `${filenamePrefix}-${Date.now()}.png`;
+            link.href = base64Data;
+            link.click();
+        }
+
+        let canvas, ctx, drawing = false;
+        function initCanvas() {
+            canvas = document.getElementById('paintCanvas');
+            if (!canvas) return;
+            ctx = canvas.getContext('2d');
+
+            const startDraw = (e) => { drawing = true; draw(e); };
+            const stopDraw = () => { drawing = false; ctx.beginPath(); sendDraw(0, 0, false); };
+
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mouseup', stopDraw);
+            canvas.addEventListener('mousemove', draw);
+
+            canvas.addEventListener('touchstart', (e) => { startDraw(e.touches[0]); e.preventDefault(); });
+            canvas.addEventListener('touchend', stopDraw);
+            canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
+        }
+
+        function draw(e) {
+            if (!drawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            drawOnCanvas(x, y, true);
+            sendDraw(x, y, true);
+        }
+
+        function drawOnCanvas(x, y, isDrawing) {
+            if (!isDrawing) { ctx.beginPath(); return; }
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#007bff';
+
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function sendDraw(x, y, isDrawing) {
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'draw', x, y, isDrawing }));
+            }
+        }
+
+        function clearCanvas() {
+            clearCanvasLocal();
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'clear' }));
+            }
+        }
+
+        function clearCanvasLocal() {
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage("You", text);
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'chat', text }));
+            }
+            input.value = '';
+        }
+
+        function appendMessage(sender, text) {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>
