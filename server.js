@@ -10,22 +10,23 @@ const io = new Server(server, {
 
 app.use(express.static('public'));
 
-const rooms = {};
+const rooms = {}; // roomCode -> { controllerId, cameras: Set }
 
 io.on('connection', (socket) => {
     socket.on('create-room', () => {
         const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
-        rooms[roomCode] = socket.id;
+        rooms[roomCode] = { controllerId: socket.id, cameras: new Set() };
         socket.join(roomCode);
         socket.emit('room-created', { roomCode });
     });
 
     socket.on('join-room', ({ roomCode }) => {
-        const hostId = rooms[roomCode];
-        if (hostId) {
+        const room = rooms[roomCode];
+        if (room) {
             socket.join(roomCode);
-            socket.emit('room-joined', { hostId });
-            io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
+            room.cameras.add(socket.id);
+            io.to(room.controllerId).emit('camera-joined', { cameraId: socket.id });
+            socket.emit('room-joined', { hostId: room.controllerId });
         } else {
             socket.emit('error-msg', 'Invalid Pin Code!');
         }
@@ -36,8 +37,17 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnecting', () => {
-        for (const room of socket.rooms) {
-            socket.to(room).emit('peer-disconnected');
+        for (const roomCode of socket.rooms) {
+            const room = rooms[roomCode];
+            if (room) {
+                if (room.controllerId === socket.id) {
+                    socket.to(roomCode).emit('peer-disconnected');
+                    delete rooms[roomCode];
+                } else if (room.cameras.has(socket.id)) {
+                    room.cameras.delete(socket.id);
+                    io.to(room.controllerId).emit('camera-left', { cameraId: socket.id });
+                }
+            }
         }
     });
 });

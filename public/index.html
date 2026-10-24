@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mobile Remote Interactive Hub</title>
+    <title>AI Multi-Camera Security Hub</title>
     <script src="/socket.io/socket.io.js"></script>
+    <!-- TensorFlow.js and COCO-SSD Human Detection Model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 15px; }
@@ -14,69 +17,34 @@
         input { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
         
-        .video-container { position: relative; width: 100%; max-width: 480px; margin: 15px auto; background: #000; border-radius: 8px; border: 2px solid #333; overflow: hidden; cursor: crosshair; }
-        #remoteVideo { width: 100%; display: block; background: #000; }
+        /* Multi-Camera Grid Container */
+        .camera-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 15px; }
+        .video-box { position: relative; background: #000; border-radius: 8px; border: 2px solid #444; overflow: hidden; }
+        .video-box video { width: 100%; display: block; background: #000; }
+        .cam-label { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #28a745; padding: 4px 8px; font-size: 12px; font-weight: bold; border-radius: 4px; z-index: 15; }
+        
         .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; font-size: 18px; font-weight: bold; color: #ffc107; z-index: 10; pointer-events: none; text-align: center; padding: 10px; }
         
         .stealth-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-            color: #fff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 28px;
-            font-weight: bold;
-            letter-spacing: 2px;
-            z-index: 999999;
-        }
-
-        .laser-pointer {
-            position: absolute;
-            width: 24px;
-            height: 24px;
-            background: rgba(255, 0, 0, 0.8);
-            border: 2px solid #fff;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-            box-shadow: 0 0 15px #ff0000, 0 0 30px #ff0000;
-            pointer-events: none;
-            z-index: 20;
-            transition: opacity 0.3s ease;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; color: #fff;
+            display: flex; justify-content: center; align-items: center; font-size: 28px; font-weight: bold; letter-spacing: 2px; z-index: 999999;
         }
 
         .motion-alert-banner {
-            position: absolute;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(220, 53, 69, 0.95);
-            color: #fff;
-            padding: 8px 15px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: bold;
-            z-index: 30;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            animation: fadeInOut 3.5s forwards;
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(220, 53, 69, 0.95); color: #fff; padding: 12px 25px; border-radius: 8px;
+            font-size: 16px; font-weight: bold; z-index: 99999; box-shadow: 0 4px 15px rgba(0,0,0,0.7);
+            animation: fadeInOut 4s forwards;
         }
 
         @keyframes fadeInOut {
-            0% { opacity: 0; transform: translate(-50%, -10px); }
+            0% { opacity: 0; transform: translate(-50%, -20px); }
             15% { opacity: 1; transform: translate(-50%, 0); }
             85% { opacity: 1; transform: translate(-50%, 0); }
             100% { opacity: 0; display: none; }
         }
 
         .hidden { display: none !important; }
-
-        #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
-        .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
-        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .status-text { font-size: 14px; color: #aaa; margin-top: 5px; }
         .qr-box { background: #fff; padding: 10px; display: inline-block; border-radius: 8px; margin-top: 10px; }
         .qr-box img { display: block; width: 180px; height: 180px; }
@@ -85,91 +53,70 @@
 <body>
 
     <div id="stealthOverlay" class="stealth-screen hidden">Parvez is watching</div>
+    <div id="motionAlertContainer"></div>
 
-    <h2>📱 Remote Camera & Interactive Hub</h2>
+    <h2>📱 AI Multi-Camera Security Hub</h2>
 
+    <!-- Connection Setup -->
     <div id="setup-card" class="card">
         <h3>Connection Mode Select Korun</h3>
-        <button onclick="startController()" style="background: #28a745;">1. Controller Phone (Generate Code & QR)</button>
+        <button onclick="startController()" style="background: #28a745;">1. Controller Phone (Generate PIN & QR)</button>
         <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinAsCamera()">2. Camera Phone (Manual Join)</button>
+        <button onclick="joinAsCamera()">2. Camera Host Phone (Join Room)</button>
         <div id="statusMsg" class="status-text"></div>
     </div>
 
+    <!-- Controller Display Code & QR -->
     <div id="controller-card" class="card hidden">
         <h3>Aponar Connection PIN:</h3>
         <div class="code-display" id="generatedCode">------</div>
-        <p>Camera phone diye nicher QR Code-ti scan korun:</p>
+        <p>Multiple Camera phone theke nicher QR scan korun ba PIN diye join করুন:</p>
         <div class="qr-box">
             <img id="qrImage" alt="QR Code">
         </div>
-        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phone to scan/connect...</div>
+        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phones to connect...</div>
     </div>
 
+    <!-- Connected Workspace -->
     <div id="workspace" class="hidden">
         <div class="card">
-            <h3>🎥 Live Camera & Remote Control</h3>
+            <h3>🎥 Live Cameras Grid</h3>
             <div id="cameraStatusMsg" class="status-text hidden" style="color: #28a745; margin-bottom: 10px;">Camera Connected & Ready</div>
             
+            <!-- Controls for Controller -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
-                <button onclick="sendCamCommand('toggle-camera')" id="camToggleBtn" style="background: #28a745;">📷 Camera On/Off (Remote)</button>
-                <div class="btn-group">
-                    <button onclick="sendCamCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
-                    <button onclick="sendCamCommand('zoom-in')" style="background: #ffc107; color: #000;">🔍 Zoom +</button>
-                    <button onclick="sendCamCommand('zoom-out')" style="background: #ffc107; color: #000;">🔍 Zoom -</button>
+                <button onclick="sendBroadcastCommand('toggle-camera')" style="background: #28a745;">📷 Camera On/Off (All)</button>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button onclick="sendBroadcastCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
+                    <button onclick="sendBroadcastCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
                 </div>
-                <div class="btn-group">
-                    <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
-                    <button onclick="sendCamCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
-                    <button onclick="sendCamCommand('speak-warning')" style="background: #e83e8c;">🗣️ Warning Voice</button>
-                </div>
-                <div class="btn-group">
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button onclick="sendBroadcastCommand('speak-warning')" style="background: #e83e8c;">🗣️ Warning Voice</button>
                     <button id="stealthBtn" onclick="toggleStealthScreen()" style="background: #6f42c1;">🕶️ Stealth Screen</button>
-                    <button onclick="captureAndSaveSnapshot()" style="background: #17a2b8;">📥 Save Snapshot</button>
                 </div>
-                <button id="motionBtn" onclick="sendCamCommand('toggle-motion')" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
-                <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
+                <button id="aiBtn" onclick="toggleAiDetection()" style="background: #fd7e14; margin-top: 10px;">🤖 AI Human Detection: OFF</button>
+                <button onclick="captureAndSaveSnapshot()" style="background: #17a2b8; margin-top: 10px;">📥 Save Snapshot</button>
             </div>
 
-            <div id="videoWrapper" class="video-container hidden" onclick="handleVideoClick(event)">
-                <div id="videoOverlay" class="video-overlay">You are being monitored</div>
-                <div id="laserDot" class="laser-pointer hidden"></div>
-                <div id="motionAlertContainer"></div>
-                <video id="remoteVideo" autoplay playsinline muted></video>
-                <video id="localPreview" autoplay playsinline muted style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></video>
-                <canvas id="hiddenMotionCanvas" width="160" height="120" style="display:none;"></canvas>
-            </div>
-            <p id="pointerHint" class="status-text hidden">💡 Video screen-e tap kore remote laser pointer point korun!</p>
+            <!-- Cameras Grid Container -->
+            <div id="cameraGrid" class="camera-grid hidden"></div>
             
-            <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
-            <canvas id="paintCanvas" width="320" height="240"></canvas>
-            <button onclick="clearCanvas()" style="background: #6c757d;">Canvas Clear Korun</button>
-        </div>
-
-        <div class="card">
-            <h3>💬 Message & Link Sync</h3>
-            <div id="chatBox" class="chat-box"></div>
-            <input type="text" id="chatInput" placeholder="Message likhun..." style="text-align: left;">
-            <button onclick="sendMessage()">Send</button>
+            <!-- Hidden elements for camera host AI processing -->
+            <video id="localPreview" autoplay playsinline muted style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></video>
         </div>
     </div>
     <script>
         const socket = io();
-        let peerConnection;
-        let dataChannel;
+        let peerConnections = {}; // cameraId -> RTCPeerConnection
+        let dataChannels = {};    // cameraId -> RTCDataChannel
         let localStream;
-        let targetPeerId;
         let isController = false;
         let useFrontCamera = false;
-        let currentZoom = 1;
-        let torchOn = false;
-        let mediaRecorder;
-        let recordedChunks = [];
-        let motionDetectionActive = false;
-        let motionCheckInterval;
-        let baselineFrameData = null;
-        let lastTriggerTime = 0;
+        let aiDetectionActive = false;
+        let aiModel = null;
+        let aiCheckInterval = null;
+        let lastAiTrigger = 0;
         let memoryCamVideo = null;
         let stealthActive = false;
 
@@ -181,9 +128,7 @@
             if (roomParam) {
                 document.getElementById('joinCode').value = roomParam;
                 window.history.replaceState({}, document.title, window.location.pathname);
-                setTimeout(() => {
-                    joinAsCamera();
-                }, 400);
+                setTimeout(() => { joinAsCamera(); }, 400);
             }
         };
 
@@ -201,7 +146,6 @@
             document.getElementById('qrImage').src = qrApiUrl;
         });
 
-        // Directly capture stream on join tap so browser grants permission once effortlessly
         async function joinAsCamera() {
             const code = document.getElementById('joinCode').value;
             if (!code) {
@@ -209,7 +153,6 @@
                 return;
             }
             initWorkspace(false);
-            document.getElementById('videoOverlay').innerText = "You are being monitored";
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
@@ -229,125 +172,90 @@
         }
 
         socket.on('room-joined', ({ hostId }) => {
-            targetPeerId = hostId;
-            document.getElementById('videoOverlay').innerText = "You are being monitored";
             setupPeerConnection(hostId, false);
         });
 
-        socket.on('viewer-joined', ({ viewerId }) => {
-            targetPeerId = viewerId;
-            document.getElementById('connectionStatus').innerText = "Camera phone connected successfully!";
+        // Controller receives notification when a camera joins
+        socket.on('camera-joined', ({ cameraId }) => {
+            document.getElementById('connectionStatus').innerText = `Camera connected! (${cameraId.substring(0,5)})`;
             initWorkspace(true);
-            setupPeerConnection(viewerId, true);
+            setupPeerConnection(cameraId, true);
+        });
+
+        socket.on('camera-left', ({ cameraId }) => {
+            removeCameraVideo(cameraId);
         });
 
         function initWorkspace(isUserControlling) {
             document.getElementById('setup-card').classList.add('hidden');
             document.getElementById('controller-card').classList.add('hidden');
             document.getElementById('workspace').classList.remove('hidden');
-            document.getElementById('videoWrapper').classList.remove('hidden');
+            document.getElementById('cameraGrid').classList.remove('hidden');
 
             if (isUserControlling) {
                 document.getElementById('remoteControls').classList.remove('hidden');
-                document.getElementById('pointerHint').classList.remove('hidden');
-                document.getElementById('videoOverlay').innerText = "Click 'Camera On/Off' to start stream";
             } else {
                 document.getElementById('cameraStatusMsg').classList.remove('hidden');
-                document.getElementById('videoOverlay').innerText = "You are being monitored";
             }
-            initCanvas();
-        }
-
-        function handleVideoClick(e) {
-            if (!isController) return;
-            const container = document.getElementById('videoWrapper');
-            const rect = container.getBoundingClientRect();
-            const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-            const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-            showPointer(xPercent, yPercent);
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'laser-pointer', xPercent, yPercent }));
-            }
-        }
-
-        function showPointer(xPercent, yPercent) {
-            const laserDot = document.getElementById('laserDot');
-            laserDot.style.left = xPercent + '%';
-            laserDot.style.top = yPercent + '%';
-            laserDot.classList.remove('hidden');
-
-            clearTimeout(window.laserTimer);
-            window.laserTimer = setTimeout(() => {
-                laserDot.classList.add('hidden');
-            }, 2500);
-        }
-
-        function showMotionNotification(msg) {
-            const container = document.getElementById('motionAlertContainer');
-            const banner = document.createElement('div');
-            banner.className = 'motion-alert-banner';
-            banner.innerText = msg;
-            container.appendChild(banner);
-            setTimeout(() => {
-                banner.remove();
-            }, 3500);
-        }
-
-        function createPeerConnection(targetId) {
-            if (peerConnection) return peerConnection;
-            peerConnection = new RTCPeerConnection(configuration);
-
-            peerConnection.onicecandidate = (e) => {
-                if (e.candidate) socket.emit('signal', { to: targetId, signal: { candidate: e.candidate } });
-            };
-
-            peerConnection.ontrack = (e) => {
-                const videoElem = document.getElementById('remoteVideo');
-                videoElem.srcObject = e.streams[0];
-                document.getElementById('videoOverlay').classList.add('hidden');
-
-                e.streams[0].getVideoTracks()[0].onmute = () => {
-                    document.getElementById('videoOverlay').innerText = "Camera Paused";
-                    document.getElementById('videoOverlay').classList.remove('hidden');
-                };
-                e.streams[0].getVideoTracks()[0].onunmute = () => {
-                    document.getElementById('videoOverlay').classList.add('hidden');
-                };
-            };
-
-            return peerConnection;
         }
 
         function setupPeerConnection(targetId, isInitiator) {
-            const pc = createPeerConnection(targetId);
+            const pc = new RTCPeerConnection(configuration);
+            peerConnections[targetId] = pc;
 
-            if (isInitiator) {
-                dataChannel = pc.createDataChannel("hubData");
-                bindDataChannelEvents();
-                createAndSendOffer(targetId);
-            } else {
-                pc.ondatachannel = (e) => {
-                    dataChannel = e.channel;
-                    bindDataChannelEvents();
+            pc.onicecandidate = (e) => {
+                if (e.candidate) socket.emit('signal', { to: targetId, signal: { candidate: e.candidate } });
+            };
+
+            if (isController) {
+                // Controller creates data channel to send commands to camera
+                const dc = pc.createDataChannel("hubData");
+                dataChannels[targetId] = dc;
+                bindDataChannelEvents(dc, targetId);
+
+                pc.ontrack = (e) => {
+                    addCameraVideo(targetId, e.streams[0]);
                 };
+
+                pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                    socket.emit('signal', { to: targetId, signal: { sdp: pc.localDescription } });
+                });
+            } else {
+                // Camera side receives data channel
+                pc.ondatachannel = (e) => {
+                    dataChannels[targetId] = e.channel;
+                    bindDataChannelEvents(e.channel, targetId);
+                };
+
+                if (localStream) {
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                }
             }
         }
 
-        async function createAndSendOffer(targetId) {
-            const pc = createPeerConnection(targetId);
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('signal', { to: targetId, signal: { sdp: offer } });
-        }
-
         socket.on('signal', async ({ from, signal }) => {
-            targetPeerId = from;
-            const pc = createPeerConnection(from);
+            let pc = peerConnections[from];
+            if (!pc) {
+                pc = new RTCPeerConnection(configuration);
+                peerConnections[from] = pc;
+                pc.onicecandidate = (e) => {
+                    if (e.candidate) socket.emit('signal', { to: from, signal: { candidate: e.candidate } });
+                };
+                pc.ontrack = (e) => {
+                    addCameraVideo(from, e.streams[0]);
+                };
+                pc.ondatachannel = (e) => {
+                    dataChannels[from] = e.channel;
+                    bindDataChannelEvents(e.channel, from);
+                };
+            }
 
             if (signal.sdp) {
                 await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
                 if (signal.sdp.type === 'offer') {
+                    if (localStream) {
+                        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                    }
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
                     socket.emit('signal', { to: from, signal: { sdp: answer } });
@@ -357,19 +265,30 @@
             }
         });
 
-        socket.on('peer-disconnected', () => {
-            handlePeerLeft();
-        });
-
-        function handlePeerLeft() {
-            const overlay = document.getElementById('videoOverlay');
-            overlay.innerText = "Device Disconnected";
-            overlay.classList.remove('hidden');
-            const videoElem = document.getElementById('remoteVideo');
-            if (videoElem.srcObject) {
-                videoElem.srcObject.getTracks().forEach(t => t.stop());
-                videoElem.srcObject = null;
+        function addCameraVideo(id, stream) {
+            const grid = document.getElementById('cameraGrid');
+            let box = document.getElementById(`box-${id}`);
+            if (!box) {
+                box = document.createElement('div');
+                box.id = `box-${id}`;
+                box.className = 'video-box';
+                box.innerHTML = `
+                    <div class="cam-label">CAM: ${id.substring(0,5)}</div>
+                    <div class="video-overlay" id="overlay-${id}">You are being monitored</div>
+                    <video id="vid-${id}" autoplay playsinline></video>
+                `;
+                grid.appendChild(box);
             }
+            const videoElem = document.getElementById(`vid-${id}`);
+            videoElem.srcObject = stream;
+            document.getElementById(`overlay-${id}`).classList.add('hidden');
+        }
+
+        function removeCameraVideo(id) {
+            const box = document.getElementById(`box-${id}`);
+            if (box) box.remove();
+            delete peerConnections[id];
+            delete dataChannels[id];
         }
 
         function getMemoryCamVideo() {
@@ -386,35 +305,156 @@
             return memoryCamVideo;
         }
 
-        // Toggle existing track safely without requesting new permission prompts
-        async function toggleCameraFromController() {
-            try {
-                const pc = createPeerConnection(targetPeerId);
-
-                if (!localStream) {
-                    localStream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: useFrontCamera ? 'user' : 'environment' },
-                        audio: true
-                    });
-                }
-
-                const senders = pc.getSenders();
-                const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
-                if (!hasVideoSender) {
-                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                    await createAndSendOffer(targetPeerId);
-                }
-
-                const videoTrack = localStream.getVideoTracks()[0];
-                if (videoTrack) {
-                    videoTrack.enabled = !videoTrack.enabled;
-                    if (dataChannel && dataChannel.readyState === 'open') {
-                        dataChannel.send(JSON.stringify({ type: 'cam-status', status: videoTrack.enabled ? 'resumed' : 'paused' }));
+        // AI Human Detection Runner using COCO-SSD Model on Camera Phone
+        async function toggleAiDetection() {
+            aiDetectionActive = !aiDetectionActive;
+            const btn = document.getElementById('aiBtn');
+            
+            if (aiDetectionActive) {
+                btn.innerText = "🤖 AI Human Detection: LOADING...";
+                showMotionNotification("🤖 Loading AI Model...");
+                
+                if (!aiModel) {
+                    try {
+                        aiModel = await cocoSsd.load();
+                    } catch (e) {
+                        console.error("AI Load error:", e);
+                        aiDetectionActive = false;
+                        btn.innerText = "🤖 AI Human Detection: OFF";
+                        return;
                     }
                 }
-            } catch (err) {
-                console.error("Camera error:", err);
+
+                btn.innerText = "🤖 AI Human Detection: ON";
+                btn.style.background = "#28a745";
+                showMotionNotification("🤖 AI Human Detection Active!");
+
+                aiCheckInterval = setInterval(async () => {
+                    if (!localStream || !localStream.active || !aiModel) return;
+                    const memVideo = getMemoryCamVideo();
+                    if (memVideo.readyState < memVideo.HAVE_ENOUGH_DATA) return;
+
+                    try {
+                        const predictions = await aiModel.detect(memVideo);
+                        // Check if any detected object is a 'person' with score > 0.65
+                        const humanFound = predictions.find(p => p.class === 'person' && p.score > 0.65);
+                        
+                        const now = Date.now();
+                        if (humanFound && (now - lastAiTrigger > 7000)) {
+                            lastAiTrigger = now;
+                            captureAndSendHumanSnapshot();
+                        }
+                    } catch (err) {
+                        console.error("AI Detection error:", err);
+                    }
+                }, 1500); // Check every 1.5 seconds
+
+            } else {
+                btn.innerText = "🤖 AI Human Detection: OFF";
+                btn.style.background = "#fd7e14";
+                clearInterval(aiCheckInterval);
             }
+        }
+
+        function captureAndSendHumanSnapshot() {
+            const memVideo = getMemoryCamVideo();
+            if (!memVideo.srcObject) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = memVideo.videoWidth || 640;
+            canvas.height = memVideo.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
+            const imgData = canvas.toDataURL('image/png');
+
+            // Send to controller via all active data channels
+            for (let id in dataChannels) {
+                const dc = dataChannels[id];
+                if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'human-detected-snapshot', image: imgData }));
+                }
+            }
+        }
+
+        function sendBroadcastCommand(action) {
+            for (let id in dataChannels) {
+                const dc = dataChannels[id];
+                if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'cam-cmd', action }));
+                }
+            }
+        }
+
+        function toggleStealthScreen() {
+            stealthActive = !stealthActive;
+            sendBroadcastCommand(stealthActive ? 'stealth-on' : 'stealth-off');
+            const btn = document.getElementById('stealthBtn');
+            if (stealthActive) {
+                btn.innerText = "🕶️ Stealth: ON";
+                btn.style.background = "#dc3545";
+            } else {
+                btn.innerText = "🕶️ Stealth Screen";
+                btn.style.background = "#6f42c1";
+            }
+        }
+
+        function showMotionNotification(msg) {
+            const container = document.getElementById('motionAlertContainer');
+            const banner = document.createElement('div');
+            banner.className = 'motion-alert-banner';
+            banner.innerText = msg;
+            container.appendChild(banner);
+            setTimeout(() => { banner.remove(); }, 4000);
+        }
+
+        function captureAndSaveSnapshot() {
+            const videos = document.querySelectorAll('.video-box video');
+            if (videos.length === 0) {
+                showMotionNotification("⚠️ No camera stream active!");
+                return;
+            }
+            videos.forEach((video, index) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const link = document.createElement('a');
+                link.download = `snapshot-cam-${index+1}-${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+            showMotionNotification("📥 Snapshots saved to gallery!");
+        }
+
+        function bindDataChannelEvents(dc, targetId) {
+            dc.onmessage = (e) => {
+                const packet = JSON.parse(e.data);
+                
+                // Controller receives human detection alert & snapshot from camera
+                if (packet.type === 'human-detected-snapshot') {
+                    saveImageToControllerGallery(packet.image, `human-detected-${targetId.substring(0,4)}`);
+                    showMotionNotification("⚠️ Human Detected! Snapshot saved to gallery.");
+                }
+
+                // Camera receives commands from controller
+                if (packet.type === 'cam-cmd') {
+                    handleCameraCommand(packet.action);
+                }
+                if (packet.type === 'stealth-on') {
+                    document.getElementById('stealthOverlay').classList.remove('hidden');
+                }
+                if (packet.type === 'stealth-off') {
+                    document.getElementById('stealthOverlay').classList.add('hidden');
+                }
+            };
+        }
+
+        function saveImageToControllerGallery(base64Data, filenamePrefix) {
+            const link = document.createElement('a');
+            link.download = `${filenamePrefix}-${Date.now()}.png`;
+            link.href = base64Data;
+            link.click();
         }
 
         function playSiren() {
@@ -430,9 +470,7 @@
                 gain.connect(ctx.destination);
                 osc.start();
                 osc.stop(ctx.currentTime + 1.5);
-            } catch (e) {
-                console.error("Audio error", e);
-            }
+            } catch (e) { console.error("Audio error", e); }
         }
 
         function speakWarningVoice() {
@@ -444,335 +482,36 @@
                     utterance.pitch = 1.0;
                     window.speechSynthesis.speak(utterance);
                 }
-            } catch (e) {
-                console.error("Speech error", e);
-            }
+            } catch (e) { console.error("Speech error", e); }
         }
 
-        function toggleMotionDetectionOnCamera() {
-            motionDetectionActive = !motionDetectionActive;
-            const hiddenCanvas = document.getElementById('hiddenMotionCanvas');
-            const hCtx = hiddenCanvas.getContext('2d');
-
-            if (motionDetectionActive) {
-                baselineFrameData = null;
-                motionCheckInterval = setInterval(() => {
-                    if (!localStream || !localStream.active) return;
-                    const memVideo = getMemoryCamVideo();
-                    if (memVideo.readyState < memVideo.HAVE_ENOUGH_DATA) return;
-                    
-                    try {
-                        hCtx.drawImage(memVideo, 0, 0, 160, 120);
-                        const frameData = hCtx.getImageData(0, 0, 160, 120).data;
-
-                        if (!baselineFrameData) {
-                            baselineFrameData = new Uint8ClampedArray(frameData);
-                            return;
-                        }
-
-                        let diff = 0;
-                        for (let i = 0; i < frameData.length; i += 8) {
-                            diff += Math.abs(frameData[i] - baselineFrameData[i]);
-                        }
-
-                        const now = Date.now();
-                        if (diff > 35000 && (now - lastTriggerTime > 6000)) { 
-                            lastTriggerTime = now;
-                            captureAndSendSnapshotToController();
-                        }
-                    } catch (err) {
-                        console.error("Motion frame error", err);
-                    }
-                }, 600);
-            } else {
-                clearInterval(motionCheckInterval);
-            }
-        }
-
-        function captureAndSendSnapshotToController() {
-            const memVideo = getMemoryCamVideo();
-            if (!memVideo.srcObject) return;
-            const canvas = document.createElement('canvas');
-            canvas.width = memVideo.videoWidth || 640;
-            canvas.height = memVideo.videoHeight || 480;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
-            
-            const imgData = canvas.toDataURL('image/png');
-
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'auto-snapshot-save', image: imgData }));
-            }
-        }
-
-        function captureAndSaveSnapshot() {
-            const video = document.getElementById('remoteVideo');
-            if (!video.srcObject) {
-                showMotionNotification("⚠️ Camera stream active nei!");
-                return;
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const link = document.createElement('a');
-            link.download = `snapshot-${Date.now()}.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
-            showMotionNotification("📥 Snapshot saved to gallery!");
-        }
-
-        function toggleStealthScreen() {
-            stealthActive = !stealthActive;
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'stealth-mode', active: stealthActive }));
-            }
-            const btn = document.getElementById('stealthBtn');
-            if (stealthActive) {
-                btn.innerText = "🕶️ Stealth: ON";
-                btn.style.background = "#dc3545";
-            } else {
-                btn.innerText = "🕶️ Stealth Screen";
-                btn.style.background = "#6f42c1";
-            }
-        }
         async function handleCameraCommand(action) {
-            if (action === 'toggle-camera') {
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify({ type: 'cam-cmd', action: 'toggle-camera' }));
-                }
-                return;
-            } else if (action === 'toggle-motion') {
-                toggleMotionDetectionOnCamera();
-                return;
-            } else if (action === 'alarm') {
-                playSiren();
-                return;
-            } else if (action === 'speak-warning') {
-                speakWarningVoice();
-                return;
-            }
+            if (action === 'alarm') { playSiren(); return; }
+            if (action === 'speak-warning') { speakWarningVoice(); return; }
+            if (action === 'toggle-motion') { toggleAiDetection(); return; }
 
-            if (!peerConnection) return;
-
+            if (!localStream) return;
             if (action === 'switch') {
                 useFrontCamera = !useFrontCamera;
                 try {
-                    if (localStream) {
-                        localStream.getTracks().forEach(track => track.stop());
-                    }
+                    localStream.getTracks().forEach(track => track.stop());
                     localStream = await navigator.mediaDevices.getUserMedia({
                         video: { facingMode: useFrontCamera ? 'user' : 'environment' },
                         audio: true
                     });
                     const localPreview = document.getElementById('localPreview');
                     localPreview.srcObject = localStream;
-                    await localPreview.play().catch(e => console.log(e));
+                    localPreview.play().catch(e => console.log(e));
                     getMemoryCamVideo();
 
                     const newVideoTrack = localStream.getVideoTracks()[0];
-                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                    if (sender) {
-                        await sender.replaceTrack(newVideoTrack);
+                    for (let id in peerConnections) {
+                        const pc = peerConnections[id];
+                        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) sender.replaceTrack(newVideoTrack);
                     }
-                } catch (e) {
-                    console.error("Switch error:", e);
-                }
-            } else if (action === 'zoom-in' || action === 'zoom-out') {
-                if (!localStream) return;
-                const videoTrack = localStream.getVideoTracks()[0];
-                if (!videoTrack) return;
-                const capabilities = videoTrack.getCapabilities();
-                if (capabilities.zoom) {
-                    currentZoom = action === 'zoom-in' ? Math.min(currentZoom + 0.5, capabilities.zoom.max) : Math.max(currentZoom - 0.5, capabilities.zoom.min);
-                    videoTrack.applyConstraints({ advanced: [{ zoom: currentZoom }] });
-                }
-            } else if (action === 'torch') {
-                if (!localStream) return;
-                const videoTrack = localStream.getVideoTracks()[0];
-                if (!videoTrack) return;
-                const capabilities = videoTrack.getCapabilities();
-                if (capabilities.torch) {
-                    torchOn = !torchOn;
-                    videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-                }
+                } catch (e) { console.error("Switch error:", e); }
             }
-        }
-
-        function sendCamCommand(action) {
-            if (action === 'toggle-motion') {
-                const btn = document.getElementById('motionBtn');
-                motionDetectionActive = !motionDetectionActive;
-                if (motionDetectionActive) {
-                    btn.innerText = "📸 Motion Snapshot Sync: ON";
-                    btn.style.background = "#28a745";
-                } else {
-                    btn.innerText = "📸 Motion Snapshot Sync: OFF";
-                    btn.style.background = "#fd7e14";
-                }
-            }
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'cam-cmd', action }));
-            }
-        }
-
-        function toggleRecording() {
-            const video = document.getElementById('remoteVideo');
-            const btn = document.getElementById('recBtn');
-            if (!video.srcObject) return;
-
-            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-                recordedChunks = [];
-                mediaRecorder = new MediaRecorder(video.srcObject);
-                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.style.display = 'none';
-                    a.href = url;
-                    a.download = 'recorded-stream.webm';
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                };
-                mediaRecorder.start();
-                btn.innerText = "⏹️ Stop Record";
-                btn.style.background = "#ffc107";
-                btn.style.color = "#000";
-            } else {
-                mediaRecorder.stop();
-                btn.innerText = "⏺️ Record Video";
-                btn.style.background = "#dc3545";
-                btn.style.color = "#fff";
-            }
-        }
-
-        function bindDataChannelEvents() {
-            if (!dataChannel) return;
-            dataChannel.onmessage = (e) => {
-                const packet = JSON.parse(e.data);
-                if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
-                if (packet.type === 'clear') clearCanvasLocal();
-                if (packet.type === 'chat') appendMessage("Remote", packet.text);
-                if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
-                
-                if (packet.type === 'auto-snapshot-save') {
-                    saveImageToControllerGallery(packet.image, "person-detected-snapshot");
-                    showMotionNotification("⚠️ Person Detected! Snapshot saved to gallery.");
-                    appendMessage("System", "⚠️ Person detected! Snapshot auto-saved to gallery.");
-                }
-
-                if (packet.type === 'stealth-mode') {
-                    const stealthOverlay = document.getElementById('stealthOverlay');
-                    if (packet.active) {
-                        stealthOverlay.classList.remove('hidden');
-                    } else {
-                        stealthOverlay.classList.add('hidden');
-                    }
-                }
-
-                if (packet.type === 'cam-cmd') {
-                    if (packet.action === 'toggle-camera') {
-                        toggleCameraFromController();
-                    } else {
-                        handleCameraCommand(packet.action);
-                    }
-                }
-                if (packet.type === 'cam-status') {
-                    const overlay = document.getElementById('videoOverlay');
-                    if (packet.status === 'paused') {
-                        overlay.innerText = "Camera Paused by Controller";
-                        overlay.classList.remove('hidden');
-                    } else {
-                        overlay.classList.add('hidden');
-                    }
-                }
-            };
-        }
-
-        function saveImageToControllerGallery(base64Data, filenamePrefix) {
-            const link = document.createElement('a');
-            link.download = `${filenamePrefix}-${Date.now()}.png`;
-            link.href = base64Data;
-            link.click();
-        }
-
-        let canvas, ctx, drawing = false;
-        function initCanvas() {
-            canvas = document.getElementById('paintCanvas');
-            if (!canvas) return;
-            ctx = canvas.getContext('2d');
-
-            const startDraw = (e) => { drawing = true; draw(e); };
-            const stopDraw = () => { drawing = false; ctx.beginPath(); sendDraw(0, 0, false); };
-
-            canvas.addEventListener('mousedown', startDraw);
-            canvas.addEventListener('mouseup', stopDraw);
-            canvas.addEventListener('mousemove', draw);
-
-            canvas.addEventListener('touchstart', (e) => { startDraw(e.touches[0]); e.preventDefault(); });
-            canvas.addEventListener('touchend', stopDraw);
-            canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
-        }
-
-        function draw(e) {
-            if (!drawing) return;
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            drawOnCanvas(x, y, true);
-            sendDraw(x, y, true);
-        }
-
-        function drawOnCanvas(x, y, isDrawing) {
-            if (!isDrawing) { ctx.beginPath(); return; }
-            ctx.lineWidth = 3;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = '#007bff';
-
-            ctx.lineTo(x, y);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-        }
-
-        function sendDraw(x, y, isDrawing) {
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'draw', x, y, isDrawing }));
-            }
-        }
-
-        function clearCanvas() {
-            clearCanvasLocal();
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'clear' }));
-            }
-        }
-
-        function clearCanvasLocal() {
-            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
-
-        function sendMessage() {
-            const input = document.getElementById('chatInput');
-            const text = input.value.trim();
-            if (!text) return;
-
-            appendMessage("You", text);
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'chat', text }));
-            }
-            input.value = '';
-        }
-
-        function appendMessage(sender, text) {
-            const chatBox = document.getElementById('chatBox');
-            chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
-            chatBox.scrollTop = chatBox.scrollHeight;
         }
     </script>
 </body>
