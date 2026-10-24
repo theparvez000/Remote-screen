@@ -4,12 +4,9 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*" }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(express.static('public'));
-
 const rooms = {}; // roomCode -> { controllerId, cameras: Set }
 
 io.on('connection', (socket) => {
@@ -34,6 +31,11 @@ io.on('connection', (socket) => {
 
     socket.on('signal', ({ to, signal }) => {
         io.to(to).emit('signal', { from: socket.id, signal });
+    });
+
+    // Relay chat, draw, and interactions across room
+    socket.on('room-broadcast', ({ roomCode, data }) => {
+        socket.to(roomCode).emit('room-broadcast', data);
     });
 
     socket.on('disconnecting', () => {

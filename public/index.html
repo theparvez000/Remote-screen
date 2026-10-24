@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Multi-Camera Security Hub</title>
     <script src="/socket.io/socket.io.js"></script>
-    <!-- TensorFlow.js and COCO-SSD Human Detection Model -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
     <style>
@@ -17,17 +16,21 @@
         input { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
         
-        /* Multi-Camera Grid Container */
         .camera-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 15px; }
-        .video-box { position: relative; background: #000; border-radius: 8px; border: 2px solid #444; overflow: hidden; }
+        .video-box { position: relative; background: #000; border-radius: 8px; border: 2px solid #444; overflow: hidden; cursor: crosshair; }
         .video-box video { width: 100%; display: block; background: #000; }
         .cam-label { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #28a745; padding: 4px 8px; font-size: 12px; font-weight: bold; border-radius: 4px; z-index: 15; }
-        
         .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; font-size: 18px; font-weight: bold; color: #ffc107; z-index: 10; pointer-events: none; text-align: center; padding: 10px; }
         
         .stealth-screen {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; color: #fff;
             display: flex; justify-content: center; align-items: center; font-size: 28px; font-weight: bold; letter-spacing: 2px; z-index: 999999;
+        }
+
+        .laser-pointer {
+            position: absolute; width: 24px; height: 24px; background: rgba(255, 0, 0, 0.8);
+            border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);
+            box-shadow: 0 0 15px #ff0000, 0 0 30px #ff0000; pointer-events: none; z-index: 20; transition: opacity 0.3s ease;
         }
 
         .motion-alert-banner {
@@ -45,9 +48,12 @@
         }
 
         .hidden { display: none !important; }
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .status-text { font-size: 14px; color: #aaa; margin-top: 5px; }
         .qr-box { background: #fff; padding: 10px; display: inline-block; border-radius: 8px; margin-top: 10px; }
         .qr-box img { display: block; width: 180px; height: 180px; }
+        #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
+        .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -63,7 +69,7 @@
         <button onclick="startController()" style="background: #28a745;">1. Controller Phone (Generate PIN & QR)</button>
         <hr style="margin: 15px 0; border-color: #333;">
         <input type="number" id="joinCode" placeholder="Enter 6-Digit Code">
-        <button onclick="joinAsCamera()">2. Camera Host Phone (Join Room)</button>
+        <button onclick="joinAsCamera()">2. Camera Phone (Manual Join)</button>
         <div id="statusMsg" class="status-text"></div>
     </div>
 
@@ -71,11 +77,11 @@
     <div id="controller-card" class="card hidden">
         <h3>Aponar Connection PIN:</h3>
         <div class="code-display" id="generatedCode">------</div>
-        <p>Multiple Camera phone theke nicher QR scan korun ba PIN diye join করুন:</p>
+        <p>Camera phone diye nicher QR Code-ti scan korun ba PIN diye join করুন:</p>
         <div class="qr-box">
             <img id="qrImage" alt="QR Code">
         </div>
-        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phones to connect...</div>
+        <div id="connectionStatus" class="status-text" style="color: #28a745; margin-top: 10px;">Waiting for Camera phone to connect...</div>
     </div>
 
     <!-- Connected Workspace -->
@@ -87,11 +93,11 @@
             <!-- Controls for Controller -->
             <div id="remoteControls" class="hidden" style="margin-top: 10px;">
                 <button onclick="sendBroadcastCommand('toggle-camera')" style="background: #28a745;">📷 Camera On/Off (All)</button>
-                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <div class="btn-group">
                     <button onclick="sendBroadcastCommand('switch')" style="background: #17a2b8;">🔄 Front/Back</button>
                     <button onclick="sendBroadcastCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
                 </div>
-                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <div class="btn-group">
                     <button onclick="sendBroadcastCommand('speak-warning')" style="background: #e83e8c;">🗣️ Warning Voice</button>
                     <button id="stealthBtn" onclick="toggleStealthScreen()" style="background: #6f42c1;">🕶️ Stealth Screen</button>
                 </div>
@@ -102,14 +108,24 @@
             <!-- Cameras Grid Container -->
             <div id="cameraGrid" class="camera-grid hidden"></div>
             
-            <!-- Hidden elements for camera host AI processing -->
             <video id="localPreview" autoplay playsinline muted style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></video>
+
+            <h4 style="margin-top: 15px;">🎨 Real-Time Drawing Canvas</h4>
+            <canvas id="paintCanvas" width="320" height="240"></canvas>
+            <button onclick="clearCanvas()" style="background: #6c757d;">Canvas Clear Korun</button>
+        </div>
+
+        <div class="card">
+            <h3>💬 Message & Link Sync</h3>
+            <div id="chatBox" class="chat-box"></div>
+            <input type="text" id="chatInput" placeholder="Message likhun..." style="text-align: left;">
+            <button onclick="sendMessage()">Send</button>
         </div>
     </div>
     <script>
         const socket = io();
-        let peerConnections = {}; // cameraId -> RTCPeerConnection
-        let dataChannels = {};    // cameraId -> RTCDataChannel
+        let peerConnections = {};
+        let dataChannels = {};
         let localStream;
         let isController = false;
         let useFrontCamera = false;
@@ -175,7 +191,6 @@
             setupPeerConnection(hostId, false);
         });
 
-        // Controller receives notification when a camera joins
         socket.on('camera-joined', ({ cameraId }) => {
             document.getElementById('connectionStatus').innerText = `Camera connected! (${cameraId.substring(0,5)})`;
             initWorkspace(true);
@@ -197,6 +212,7 @@
             } else {
                 document.getElementById('cameraStatusMsg').classList.remove('hidden');
             }
+            initCanvas();
         }
 
         function setupPeerConnection(targetId, isInitiator) {
@@ -208,7 +224,6 @@
             };
 
             if (isController) {
-                // Controller creates data channel to send commands to camera
                 const dc = pc.createDataChannel("hubData");
                 dataChannels[targetId] = dc;
                 bindDataChannelEvents(dc, targetId);
@@ -221,7 +236,6 @@
                     socket.emit('signal', { to: targetId, signal: { sdp: pc.localDescription } });
                 });
             } else {
-                // Camera side receives data channel
                 pc.ondatachannel = (e) => {
                     dataChannels[targetId] = e.channel;
                     bindDataChannelEvents(e.channel, targetId);
@@ -275,7 +289,8 @@
                 box.innerHTML = `
                     <div class="cam-label">CAM: ${id.substring(0,5)}</div>
                     <div class="video-overlay" id="overlay-${id}">You are being monitored</div>
-                    <video id="vid-${id}" autoplay playsinline></video>
+                    <video id="vid-${id}" autoplay playsinline onclick="handleVideoClick(event, '${id}')"></video>
+                    <div id="laser-${id}" class="laser-pointer hidden"></div>
                 `;
                 grid.appendChild(box);
             }
@@ -291,6 +306,33 @@
             delete dataChannels[id];
         }
 
+        function handleVideoClick(e, id) {
+            if (!isController) return;
+            const container = e.currentTarget.parentElement;
+            const rect = container.getBoundingClientRect();
+            const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
+            const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
+
+            showPointer(id, xPercent, yPercent);
+            const dc = dataChannels[id];
+            if (dc && dc.readyState === 'open') {
+                dc.send(JSON.stringify({ type: 'laser-pointer', xPercent, yPercent }));
+            }
+        }
+
+        function showPointer(id, xPercent, yPercent) {
+            const laser = document.getElementById(`laser-${id}`);
+            if (!laser) return;
+            laser.style.left = xPercent + '%';
+            laser.style.top = yPercent + '%';
+            laser.classList.remove('hidden');
+
+            clearTimeout(window[`laserTimer_${id}`]);
+            window[`laserTimer_${id}`] = setTimeout(() => {
+                laser.classList.add('hidden');
+            }, 2500);
+        }
+
         function getMemoryCamVideo() {
             if (!memoryCamVideo) {
                 memoryCamVideo = document.createElement('video');
@@ -304,8 +346,6 @@
             }
             return memoryCamVideo;
         }
-
-        // AI Human Detection Runner using COCO-SSD Model on Camera Phone
         async function toggleAiDetection() {
             aiDetectionActive = !aiDetectionActive;
             const btn = document.getElementById('aiBtn');
@@ -336,7 +376,6 @@
 
                     try {
                         const predictions = await aiModel.detect(memVideo);
-                        // Check if any detected object is a 'person' with score > 0.65
                         const humanFound = predictions.find(p => p.class === 'person' && p.score > 0.65);
                         
                         const now = Date.now();
@@ -347,7 +386,7 @@
                     } catch (err) {
                         console.error("AI Detection error:", err);
                     }
-                }, 1500); // Check every 1.5 seconds
+                }, 1500);
 
             } else {
                 btn.innerText = "🤖 AI Human Detection: OFF";
@@ -366,7 +405,6 @@
             ctx.drawImage(memVideo, 0, 0, canvas.width, canvas.height);
             const imgData = canvas.toDataURL('image/png');
 
-            // Send to controller via all active data channels
             for (let id in dataChannels) {
                 const dc = dataChannels[id];
                 if (dc && dc.readyState === 'open') {
@@ -426,18 +464,20 @@
             });
             showMotionNotification("📥 Snapshots saved to gallery!");
         }
-
         function bindDataChannelEvents(dc, targetId) {
             dc.onmessage = (e) => {
                 const packet = JSON.parse(e.data);
+                if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
+                if (packet.type === 'clear') clearCanvasLocal();
+                if (packet.type === 'chat') appendMessage("Remote", packet.text);
+                if (packet.type === 'laser-pointer') showPointer(targetId, packet.xPercent, packet.yPercent);
                 
-                // Controller receives human detection alert & snapshot from camera
                 if (packet.type === 'human-detected-snapshot') {
                     saveImageToControllerGallery(packet.image, `human-detected-${targetId.substring(0,4)}`);
                     showMotionNotification("⚠️ Human Detected! Snapshot saved to gallery.");
+                    appendMessage("System", `⚠️ Human detected on CAM ${targetId.substring(0,5)}! Snapshot saved.`);
                 }
 
-                // Camera receives commands from controller
                 if (packet.type === 'cam-cmd') {
                     handleCameraCommand(packet.action);
                 }
@@ -455,6 +495,88 @@
             link.download = `${filenamePrefix}-${Date.now()}.png`;
             link.href = base64Data;
             link.click();
+        }
+
+        let canvas, ctx, drawing = false;
+        function initCanvas() {
+            canvas = document.getElementById('paintCanvas');
+            if (!canvas) return;
+            ctx = canvas.getContext('2d');
+
+            const startDraw = (e) => { drawing = true; draw(e); };
+            const stopDraw = () => { drawing = false; ctx.beginPath(); sendDraw(0, 0, false); };
+
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mouseup', stopDraw);
+            canvas.addEventListener('mousemove', draw);
+
+            canvas.addEventListener('touchstart', (e) => { startDraw(e.touches[0]); e.preventDefault(); });
+            canvas.addEventListener('touchend', stopDraw);
+            canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
+        }
+
+        function draw(e) {
+            if (!drawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            drawOnCanvas(x, y, true);
+            sendDraw(x, y, true);
+        }
+
+        function drawOnCanvas(x, y, isDrawing) {
+            if (!isDrawing) { ctx.beginPath(); return; }
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#007bff';
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function sendDraw(x, y, isDrawing) {
+            for (let id in dataChannels) {
+                const dc = dataChannels[id];
+                if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'draw', x, y, isDrawing }));
+                }
+            }
+        }
+
+        function clearCanvas() {
+            clearCanvasLocal();
+            for (let id in dataChannels) {
+                const dc = dataChannels[id];
+                if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'clear' }));
+                }
+            }
+        }
+
+        function clearCanvasLocal() {
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage("You", text);
+            for (let id in dataChannels) {
+                const dc = dataChannels[id];
+                if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'chat', text }));
+                }
+            }
+            input.value = '';
+        }
+
+        function appendMessage(sender, text) {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
 
         function playSiren() {
