@@ -11,49 +11,18 @@
         .card { background: #1e1e1e; max-width: 500px; margin: 15px auto; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         button { background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 10px; }
         button:hover { background: #0056b3; }
-        input { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
+        input, select { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; text-align: center; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
         .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #28a745; margin: 15px 0; }
-        
         .video-container { position: relative; width: 100%; max-width: 480px; margin: 15px auto; background: #000; border-radius: 8px; border: 2px solid #333; overflow: hidden; cursor: crosshair; }
         #remoteVideo { width: 100%; display: block; background: #000; }
         .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; font-size: 18px; font-weight: bold; color: #ffc107; z-index: 10; pointer-events: none; text-align: center; padding: 10px; }
-        
-        .stealth-screen {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; color: #fff;
-            display: flex; justify-content: center; align-items: center; font-size: 28px; font-weight: bold; letter-spacing: 2px; z-index: 999999;
-            text-align: center; padding: 20px; flex-direction: column;
-        }
-
-        .custom-modal {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.85); display: flex; justify-content: center; align-items: center; z-index: 99999;
-        }
-        .modal-box {
-            background: #1e1e1e; padding: 25px; border-radius: 12px; width: 90%; max-width: 380px;
-            border: 1px solid #444; box-shadow: 0 6px 20px rgba(0,0,0,0.7); text-align: center;
-        }
+        .stealth-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; color: #fff; display: flex; justify-content: center; align-items: center; font-size: 26px; font-weight: bold; z-index: 999999; text-align: center; padding: 20px; flex-direction: column; }
+        .custom-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.85); display: flex; justify-content: center; align-items: center; z-index: 99999; }
+        .modal-box { background: #1e1e1e; padding: 25px; border-radius: 12px; width: 90%; max-width: 380px; border: 1px solid #444; box-shadow: 0 6px 20px rgba(0,0,0,0.7); text-align: center; }
         .modal-box h3 { margin-bottom: 15px; color: #fff; font-size: 18px; }
-
-        .laser-pointer {
-            position: absolute; width: 24px; height: 24px; background: rgba(255, 0, 0, 0.8);
-            border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);
-            box-shadow: 0 0 15px #ff0000, 0 0 30px #ff0000; pointer-events: none; z-index: 20; transition: opacity 0.3s ease;
-        }
-
-        .motion-alert-banner {
-            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-            background: rgba(220, 53, 69, 0.95); color: #fff; padding: 8px 15px; border-radius: 6px;
-            font-size: 14px; font-weight: bold; z-index: 30; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            animation: fadeInOut 3.5s forwards;
-        }
-
-        @keyframes fadeInOut {
-            0% { opacity: 0; transform: translate(-50%, -10px); }
-            15% { opacity: 1; transform: translate(-50%, 0); }
-            85% { opacity: 1; transform: translate(-50%, 0); }
-            100% { opacity: 0; display: none; }
-        }
-
+        .laser-pointer { position: absolute; width: 24px; height: 24px; background: rgba(255, 0, 0, 0.8); border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 15px #ff0000, 0 0 30px #ff0000; pointer-events: none; z-index: 20; transition: opacity 0.3s ease; }
+        .motion-alert-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(220, 53, 69, 0.95); color: #fff; padding: 8px 15px; border-radius: 6px; font-size: 14px; font-weight: bold; z-index: 30; box-shadow: 0 4px 10px rgba(0,0,0,0.5); animation: fadeInOut 3.5s forwards; }
+        @keyframes fadeInOut { 0% { opacity: 0; transform: translate(-50%, -10px); } 15% { opacity: 1; transform: translate(-50%, 0); } 85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; display: none; } }
         .hidden { display: none !important; }
         #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
         .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
@@ -64,10 +33,9 @@
     </style>
 </head>
 <body>
-
     <div id="stealthOverlay" class="stealth-screen hidden">
         <div id="stealthText">Parvez is watching</div>
-        <img id="stealthImg" alt="Stealth Image" style="max-width: 85%; max-height: 60vh; display: none; margin-top: 15px; border-radius: 8px; object-fit: contain;">
+        <img id="stealthImg" alt="Stealth Image" style="max-width: 85vw; max-height: 55vh; display: none; margin-top: 15px; border-radius: 8px; object-fit: contain;">
     </div>
 
     <div id="stealthModal" class="custom-modal hidden">
@@ -78,6 +46,21 @@
             <div class="btn-group">
                 <button onclick="closeStealthModal(false)" style="background: #6c757d;">Cancel</button>
                 <button onclick="closeStealthModal(true)" style="background: #28a745;">Apply & ON</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="audioModal" class="custom-modal hidden">
+        <div class="modal-box">
+            <h3>🗣️ Custom Warning Voice</h3>
+            <input type="text" id="audioTextInput" placeholder="Ekhane kotha likhun..." value="Don't touch my phone">
+            <select id="voiceGenderSelect">
+                <option value="female">Female Voice</option>
+                <option value="male">Male Voice</option>
+            </select>
+            <div class="btn-group">
+                <button onclick="closeAudioModal(false)" style="background: #6c757d;">Cancel</button>
+                <button onclick="closeAudioModal(true)" style="background: #e83e8c;">Play Voice</button>
             </div>
         </div>
     </div>
@@ -118,13 +101,13 @@
                 <div class="btn-group">
                     <button onclick="sendCamCommand('torch')" style="background: #6f42c1;">🔦 Flashlight</button>
                     <button onclick="sendCamCommand('alarm')" style="background: #dc3545;">🚨 Siren Alarm</button>
-                    <button onclick="sendCamCommand('speak-warning')" style="background: #e83e8c;">🗣️ Warning Voice</button>
+                    <button onclick="openAudioModal()" style="background: #e83e8c;">🗣️ Warning Voice</button>
                 </div>
                 <div class="btn-group">
                     <button id="stealthBtn" onclick="toggleStealthScreen()" style="background: #6f42c1;">🕶️ Stealth Screen</button>
                     <button onclick="captureAndSaveSnapshot()" style="background: #17a2b8;">📥 Save Snapshot</button>
                 </div>
-                <button id="motionBtn" onclick="sendCamCommand('toggle-motion')" style="background: #fd7e14;">📸 Motion Snapshot Sync: OFF</button>
+                <button id="motionBtn" onclick="sendCamCommand('toggle-motion')" style="background: #fd7e14;">📸 Anti-Theft Motion: OFF</button>
                 <button id="recBtn" onclick="toggleRecording()" style="background: #dc3545;">⏺️ Record Video</button>
             </div>
 
@@ -150,7 +133,6 @@
             <button onclick="sendMessage()">Send</button>
         </div>
     </div>
-
     <script>
         const socket = io();
         let peerConnection;
@@ -197,6 +179,7 @@
             const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(joinUrl)}`;
             document.getElementById('qrImage').src = qrApiUrl;
         });
+
         async function joinAsCamera() {
             const code = document.getElementById('joinCode').value;
             if (!code) {
@@ -235,7 +218,6 @@
             initWorkspace(true);
             setupPeerConnection(viewerId, true);
         });
-
         function initWorkspace(isUserControlling) {
             document.getElementById('setup-card').classList.add('hidden');
             document.getElementById('controller-card').classList.add('hidden');
@@ -424,13 +406,35 @@
             } catch (e) { console.error("Audio error", e); }
         }
 
-        function speakWarningVoice() {
+        function openAudioModal() {
+            document.getElementById('audioModal').classList.remove('hidden');
+        }
+
+        function closeAudioModal(isApply) {
+            document.getElementById('audioModal').classList.add('hidden');
+            if (isApply) {
+                const text = document.getElementById('audioTextInput').value.trim() || "Warning";
+                const gender = document.getElementById('voiceGenderSelect').value;
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'custom-speech', text, gender }));
+                }
+            }
+        }
+
+        function speakCustomVoice(text, gender) {
             try {
                 if ('speechSynthesis' in window) {
                     window.speechSynthesis.cancel();
-                    const utterance = new SpeechSynthesisUtterance("Don't close your browser");
+                    const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = 1.0;
-                    utterance.pitch = 1.0;
+                    utterance.pitch = gender === 'female' ? 1.4 : 0.8;
+
+                    const voices = window.speechSynthesis.getVoices();
+                    if (voices.length > 0) {
+                        const matchedVoice = voices.find(v => gender === 'female' ? (v.name.includes('female') || v.name.includes('Google UK English Female') || v.lang.includes('en')) : (v.name.includes('male') || v.name.includes('Google UK English Male')));
+                        if (matchedVoice) utterance.voice = matchedVoice;
+                    }
+
                     window.speechSynthesis.speak(utterance);
                 }
             } catch (e) { console.error("Speech error", e); }
@@ -465,7 +469,7 @@
                         prevFrameData.set(frameData);
 
                         const now = Date.now();
-                        if (diff > 25000 && (now - lastTriggerTime > 5000)) { 
+                        if (diff > 20000 && (now - lastTriggerTime > 5000)) { 
                             lastTriggerTime = now;
                             captureAndSendSnapshotToController();
                         }
@@ -532,9 +536,28 @@
                 if (fileInput.files && fileInput.files[0]) {
                     const reader = new FileReader();
                     reader.onload = function(e) {
-                        customStealthImage = e.target.result;
-                        stealthActive = true;
-                        applyStealthState(customStealthImage);
+                        const img = new Image();
+                        img.onload = function() {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            const maxDim = 500;
+                            if (width > height && width > maxDim) {
+                                height *= maxDim / width;
+                                width = maxDim;
+                            } else if (height > maxDim) {
+                                width *= maxDim / height;
+                                height = maxDim;
+                            }
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            customStealthImage = canvas.toDataURL('image/jpeg', 0.6);
+                            stealthActive = true;
+                            applyStealthState(customStealthImage);
+                        };
+                        img.src = e.target.result;
                     };
                     reader.readAsDataURL(fileInput.files[0]);
                 } else {
@@ -563,7 +586,6 @@
                 btn.style.background = "#6f42c1";
             }
         }
-
         async function handleCameraCommand(action) {
             if (action === 'toggle-camera') {
                 if (dataChannel && dataChannel.readyState === 'open') {
@@ -575,9 +597,6 @@
                 return;
             } else if (action === 'alarm') {
                 playSiren();
-                return;
-            } else if (action === 'speak-warning') {
-                speakWarningVoice();
                 return;
             }
 
@@ -630,10 +649,10 @@
                 const btn = document.getElementById('motionBtn');
                 motionDetectionActive = !motionDetectionActive;
                 if (motionDetectionActive) {
-                    btn.innerText = "📸 Motion Snapshot Sync: ON";
+                    btn.innerText = "📸 Anti-Theft Motion: ON";
                     btn.style.background = "#28a745";
                 } else {
-                    btn.innerText = "📸 Motion Snapshot Sync: OFF";
+                    btn.innerText = "📸 Anti-Theft Motion: OFF";
                     btn.style.background = "#fd7e14";
                 }
             }
@@ -684,9 +703,13 @@
                 if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
                 
                 if (packet.type === 'auto-snapshot-save') {
-                    saveImageToControllerGallery(packet.image, "person-detected-snapshot");
-                    showMotionNotification("⚠️ Motion Detected! Snapshot saved to gallery.");
-                    appendMessage("System", "⚠️ Motion detected! Snapshot auto-saved to gallery.");
+                    saveImageToControllerGallery(packet.image, "antitheft-human-snapshot");
+                    showMotionNotification("⚠️ Anti-Theft Alert! Human/Motion detected & saved.");
+                    appendMessage("System", "⚠️ Anti-Theft Alert! Snapshot auto-saved to gallery.");
+                }
+
+                if (packet.type === 'custom-speech') {
+                    speakCustomVoice(packet.text, packet.gender);
                 }
 
                 if (packet.type === 'stealth-mode') {
