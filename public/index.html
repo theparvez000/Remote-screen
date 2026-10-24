@@ -25,7 +25,8 @@
         @keyframes fadeInOut { 0% { opacity: 0; transform: translate(-50%, -10px); } 15% { opacity: 1; transform: translate(-50%, 0); } 85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; display: none; } }
         .hidden { display: none !important; }
         #paintCanvas { background: #ffffff; border-radius: 8px; touch-action: none; margin-top: 15px; cursor: crosshair; }
-        .chat-box { background: #222; height: 130px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
+        .chat-box { background: #222; height: 150px; overflow-y: auto; text-align: left; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
+        .chat-img { max-width: 160px; max-height: 160px; border-radius: 6px; margin-top: 5px; display: block; object-fit: cover; }
         .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .status-text { font-size: 14px; color: #aaa; margin-top: 5px; }
         .qr-box { background: #fff; padding: 10px; display: inline-block; border-radius: 8px; margin-top: 10px; }
@@ -77,7 +78,7 @@
     </div>
 
     <div id="controller-card" class="card hidden">
-        <h3>Aponar Connection PIN:</h3>
+        <h3>Aponار Connection PIN:</h3>
         <div class="code-display" id="generatedCode">------</div>
         <p>Camera phone diye nicher QR Code-ti scan korun:</p>
         <div class="qr-box">
@@ -130,7 +131,11 @@
             <h3>💬 Message & Link Sync</h3>
             <div id="chatBox" class="chat-box"></div>
             <input type="text" id="chatInput" placeholder="Message likhun..." style="text-align: left;">
-            <button onclick="sendMessage()">Send</button>
+            <input type="file" id="chatImageInput" accept="image/*" style="background: #222; color: #fff; border: 1px solid #444; padding: 6px; border-radius: 6px; width: 100%; font-size: 13px;">
+            <div class="btn-group">
+                <button onclick="sendMessage()" style="background: #007bff; flex: 1;">Send Text</button>
+                <button onclick="sendChatImage()" style="background: #28a745; flex: 1;">Send Image</button>
+            </div>
         </div>
     </div>
     <script>
@@ -699,13 +704,14 @@
                 const packet = JSON.parse(e.data);
                 if (packet.type === 'draw') drawOnCanvas(packet.x, packet.y, packet.isDrawing);
                 if (packet.type === 'clear') clearCanvasLocal();
-                if (packet.type === 'chat') appendMessage("Remote", packet.text);
+                if (packet.type === 'chat') appendMessage("Remote", packet.text, false);
+                if (packet.type === 'chat-image') appendMessage("Remote", packet.image, true);
                 if (packet.type === 'laser-pointer') showPointer(packet.xPercent, packet.yPercent);
                 
                 if (packet.type === 'auto-snapshot-save') {
                     saveImageToControllerGallery(packet.image, "antitheft-human-snapshot");
                     showMotionNotification("⚠️ Anti-Theft Alert! Human/Motion detected & saved.");
-                    appendMessage("System", "⚠️ Anti-Theft Alert! Snapshot auto-saved to gallery.");
+                    appendMessage("System", "⚠️ Anti-Theft Alert! Snapshot auto-saved to gallery.", false);
                 }
 
                 if (packet.type === 'custom-speech') {
@@ -757,7 +763,6 @@
             link.href = base64Data;
             link.click();
         }
-
         let canvas, ctx, drawing = false;
         function initCanvas() {
             canvas = document.getElementById('paintCanvas');
@@ -820,16 +825,58 @@
             const text = input.value.trim();
             if (!text) return;
 
-            appendMessage("You", text);
+            appendMessage("You", text, false);
             if (dataChannel && dataChannel.readyState === 'open') {
                 dataChannel.send(JSON.stringify({ type: 'chat', text }));
             }
             input.value = '';
         }
 
-        function appendMessage(sender, text) {
+        function sendChatImage() {
+            const fileInput = document.getElementById('chatImageInput');
+            if (!fileInput.files || !fileInput.files[0]) {
+                alert("Prothome ekti image select korun!");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    const maxDim = 400;
+                    if (width > height && width > maxDim) {
+                        height *= maxDim / width;
+                        width = maxDim;
+                    } else if (height > maxDim) {
+                        width *= maxDim / height;
+                        height = maxDim;
+                    }
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
+
+                    appendMessage("You", compressedBase64, true);
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send(JSON.stringify({ type: 'chat-image', image: compressedBase64 }));
+                    }
+                    fileInput.value = "";
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+        }
+
+        function appendMessage(sender, content, isImage) {
             const chatBox = document.getElementById('chatBox');
-            chatBox.innerHTML += `<div><b>${sender}:</b> ${text}</div>`;
+            if (isImage) {
+                chatBox.innerHTML += `<div><b>${sender}:</b><br><img src="${content}" class="chat-img"></div>`;
+            } else {
+                chatBox.innerHTML += `<div><b>${sender}:</b> ${content}</div>`;
+            }
             chatBox.scrollTop = chatBox.scrollHeight;
         }
     </script>
