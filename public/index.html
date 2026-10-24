@@ -139,6 +139,7 @@
         </div>
     </div>
     <script>
+        const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }, { urls: "stun:stun2.l.google.com:19302" }] };
         const socket = io();
         let peerConnection;
         let dataChannel;
@@ -159,17 +160,6 @@
         let customStealthText = "Parvez is watching";
         let customStealthImage = null;
 
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
-
-        window.onload = () => {
-            const urlParams = new URLSearchParams(window.location.search);
-            const roomParam = urlParams.get('room');
-            if (roomParam) {
-                document.getElementById('joinCode').value = roomParam;
-                window.history.replaceState({}, document.title, window.location.pathname);
-                setTimeout(() => { joinAsCamera(); }, 400);
-            }
-        };
 
         function startController() {
             isController = true;
