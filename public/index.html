@@ -21,6 +21,7 @@
         .stealth-screen {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; color: #fff;
             display: flex; justify-content: center; align-items: center; font-size: 28px; font-weight: bold; letter-spacing: 2px; z-index: 999999;
+            text-align: center; padding: 20px;
         }
 
         .laser-pointer {
@@ -124,6 +125,7 @@
             <button onclick="sendMessage()">Send</button>
         </div>
     </div>
+
     <script>
         const socket = io();
         let peerConnection;
@@ -138,10 +140,11 @@
         let recordedChunks = [];
         let motionDetectionActive = false;
         let motionCheckInterval;
-        let baselineFrameData = null;
+        let prevFrameData = null;
         let lastTriggerTime = 0;
         let memoryCamVideo = null;
         let stealthActive = false;
+        let customStealthText = "Parvez is watching";
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19002' }] };
 
@@ -336,6 +339,10 @@
                 videoElem.srcObject = null;
             }
         }
+    </script>
+</body>
+</html>
+    <script>
         function getMemoryCamVideo() {
             if (!memoryCamVideo) {
                 memoryCamVideo = document.createElement('video');
@@ -414,7 +421,7 @@
             const hCtx = hiddenCanvas.getContext('2d');
 
             if (motionDetectionActive) {
-                baselineFrameData = null;
+                prevFrameData = null;
                 motionCheckInterval = setInterval(() => {
                     if (!localStream || !localStream.active) return;
                     const memVideo = getMemoryCamVideo();
@@ -424,23 +431,25 @@
                         hCtx.drawImage(memVideo, 0, 0, 160, 120);
                         const frameData = hCtx.getImageData(0, 0, 160, 120).data;
 
-                        if (!baselineFrameData) {
-                            baselineFrameData = new Uint8ClampedArray(frameData);
+                        if (!prevFrameData) {
+                            prevFrameData = new Uint8ClampedArray(frameData);
                             return;
                         }
 
                         let diff = 0;
                         for (let i = 0; i < frameData.length; i += 8) {
-                            diff += Math.abs(frameData[i] - baselineFrameData[i]);
+                            diff += Math.abs(frameData[i] - prevFrameData[i]);
                         }
 
+                        prevFrameData.set(frameData);
+
                         const now = Date.now();
-                        if (diff > 35000 && (now - lastTriggerTime > 6000)) { 
+                        if (diff > 25000 && (now - lastTriggerTime > 5000)) { 
                             lastTriggerTime = now;
                             captureAndSendSnapshotToController();
                         }
                     } catch (err) { console.error("Motion frame error", err); }
-                }, 600);
+                }, 500);
             } else {
                 clearInterval(motionCheckInterval);
             }
@@ -482,9 +491,17 @@
 
         function toggleStealthScreen() {
             stealthActive = !stealthActive;
-            if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(JSON.stringify({ type: 'stealth-mode', active: stealthActive }));
+            if (stealthActive) {
+                let userInput = prompt("Stealth screen er text din:", customStealthText);
+                if (userInput !== null && userInput.trim() !== "") {
+                    customStealthText = userInput;
+                }
             }
+
+            if (dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(JSON.stringify({ type: 'stealth-mode', active: stealthActive, text: customStealthText }));
+            }
+
             const btn = document.getElementById('stealthBtn');
             if (stealthActive) {
                 btn.innerText = "🕶️ Stealth: ON";
@@ -616,13 +633,14 @@
                 
                 if (packet.type === 'auto-snapshot-save') {
                     saveImageToControllerGallery(packet.image, "person-detected-snapshot");
-                    showMotionNotification("⚠️ Person Detected! Snapshot saved to gallery.");
-                    appendMessage("System", "⚠️ Person detected! Snapshot auto-saved to gallery.");
+                    showMotionNotification("⚠️ Motion Detected! Snapshot saved to gallery.");
+                    appendMessage("System", "⚠️ Motion detected! Snapshot auto-saved to gallery.");
                 }
 
                 if (packet.type === 'stealth-mode') {
                     const stealthOverlay = document.getElementById('stealthOverlay');
                     if (packet.active) {
+                        stealthOverlay.innerText = packet.text || "Parvez is watching";
                         stealthOverlay.classList.remove('hidden');
                     } else {
                         stealthOverlay.classList.add('hidden');
